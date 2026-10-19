@@ -17,8 +17,12 @@ static constexpr int PIN_TFT_SCLK = 14;
 static constexpr int PIN_TFT_MISO = 12;
 static constexpr int PIN_TFT_BL   = 21;
 
-static constexpr int PIN_TOUCH_CS  = 33;
-static constexpr int PIN_TOUCH_IRQ = 36;
+static constexpr int PIN_TOUCH_CS   = 33;
+static constexpr int PIN_TOUCH_IRQ  = 36;
+// This CYD wires the touch controller on its own SPI bus, not the display bus.
+static constexpr int PIN_TOUCH_CLK  = 25;
+static constexpr int PIN_TOUCH_MISO = 39;
+static constexpr int PIN_TOUCH_MOSI = 32;
 
 // MicroSD shares VSPI with the display and touch. GPIO 5 is the card's
 // chip-select. It must stay high during TFT and touch transfers, or the
@@ -31,17 +35,16 @@ static constexpr int TILE     = 16;
 static constexpr int MAP_W    = 20;
 static constexpr int MAP_H    = 15;
 
-// Touch controller is left at rotation 0 so these constants are the only
-// mapping. Serial prints "raw x y -> sx sy" on each accepted tap.
-// Swap / invert until a corner tap lands on that corner, then tighten the
-// min/max values so the edge tiles are reachable.
+// Display rotation 1 swaps the panel axes (row/column). The touch axes follow
+// that: finger left/right selects the tool, finger up/down selects the row.
+// The bottom of the glass is the hotbar.
 static constexpr int  TOUCH_X_MIN    = 200;
 static constexpr int  TOUCH_X_MAX    = 3700;
 static constexpr int  TOUCH_Y_MIN    = 240;
 static constexpr int  TOUCH_Y_MAX    = 3800;
-static constexpr bool TOUCH_SWAP_XY  = false;
-static constexpr bool TOUCH_INVERT_X = true;
-static constexpr bool TOUCH_INVERT_Y = true;
+static constexpr bool TOUCH_SWAP_XY  = true;
+static constexpr bool TOUCH_INVERT_X = false;
+static constexpr bool TOUCH_INVERT_Y = false;
 
 // 100 ms of real time is one game minute, so a full day lasts ~2.4 minutes.
 // Watered crops advance one stage every GROW_INTERVAL_MS (mature at stage 3).
@@ -63,11 +66,13 @@ static constexpr uint8_t  SEEDS_START = 10;
 
 static constexpr uint8_t CROP_MATURE = 3;
 
-// HUD covers the top 16 px. Hotbar covers y 208..239 (32 px).
-// Farm plots are placed in the visible band between them.
-static constexpr int HUD_H    = 16;
-static constexpr int HOTBAR_Y = 208;
-static constexpr int HOTBAR_H = 32;
+// HUD covers the top 16 px. Hotbar is drawn at y 208..239.
+// The hit row starts 8 px higher so the buttons are easier to press,
+// and it stops there so the crop rows above are not treated as buttons.
+static constexpr int HUD_H         = 16;
+static constexpr int HOTBAR_Y      = 208;
+static constexpr int HOTBAR_H      = 32;
+static constexpr int HOTBAR_HIT_Y  = 200;
 
 // Night window is 18:00 through 05:59. World pixels are scaled by NIGHT_NUM/16.
 static constexpr uint8_t NIGHT_HOUR_START = 18;

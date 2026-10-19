@@ -42,21 +42,49 @@ static void dryAll(GameState& g) {
 static void useTool(GameState& g, Cell& cell) {
     switch (g.tool) {
         case TOOL_HOE:
-            if (cell.crop != 0) return;
-            if (cell.ground != G_GRASS && cell.ground != G_SOIL) return;
+            if (cell.crop != 0) {
+                setToast(g, cell.stage >= CROP_MATURE ? "Harvest it first" : "Crop is growing");
+                return;
+            }
+            if (cell.ground == G_TILLED) {
+                setToast(g, "Already tilled");
+                return;
+            }
+            if (cell.ground != G_GRASS && cell.ground != G_SOIL) {
+                setToast(g, "Can't hoe that");
+                return;
+            }
             if (!spend(g, COST_HOE)) return;
             cell.ground = G_TILLED;
             cell.watered = 0;
             break;
 
         case TOOL_WATER:
-            if (cell.ground != G_TILLED || cell.watered) return;
+            if (cell.ground == G_GRASS || cell.ground == G_SOIL) {
+                setToast(g, "Till it first");
+                return;
+            }
+            if (cell.ground != G_TILLED) {
+                setToast(g, "Can't water that");
+                return;
+            }
+            if (cell.watered) {
+                setToast(g, "Already watered");
+                return;
+            }
             if (!spend(g, COST_WATER)) return;
             cell.watered = 1;
             break;
 
         case TOOL_SEED:
-            if (cell.ground != G_TILLED || cell.crop != 0) return;
+            if (cell.ground != G_TILLED) {
+                setToast(g, "Till it first");
+                return;
+            }
+            if (cell.crop != 0) {
+                setToast(g, "Already planted");
+                return;
+            }
             if (g.seeds == 0) {
                 setToast(g, "No seeds");
                 return;
@@ -68,7 +96,10 @@ static void useTool(GameState& g, Cell& cell) {
             break;
 
         case TOOL_HARVEST:
-            if (cell.crop == 0 || cell.stage < CROP_MATURE) return;
+            if (cell.crop == 0 || cell.stage < CROP_MATURE) {
+                setToast(g, "Not ready");
+                return;
+            }
             if (g.crops == 255) {
                 setToast(g, "Pack full");
                 return;
@@ -123,34 +154,77 @@ static void useBed(GameState& g) {
     markSave(g);
 }
 
-static bool tryStep(GameState& g, int dx, int dy) {
-    int nx = (int)g.playerX + dx;
-    int ny = (int)g.playerY + dy;
-    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) return false;
-    if (!walkable(g.cells[ny][nx].ground)) return false;
-    g.playerX = (uint8_t)nx;
-    g.playerY = (uint8_t)ny;
-    return true;
-}
+// Shortest walk around fences, water, and the house. One tile of that path
+// is taken per call. A blocked target stops on a neighboring tile instead.
+static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
+    const int count = MAP_W * MAP_H;
+    static uint16_t parent[MAP_W * MAP_H];
+    static uint8_t qx[MAP_W * MAP_H];
+    static uint8_t qy[MAP_W * MAP_H];
+    memset(parent, 0, sizeof(parent));
 
-// One tile per tap. Prefer the axis with more ground left to cover so a
-// diagonal target still reaches the plot without a pathfinder.
-static void stepToward(GameState& g, uint8_t tx, uint8_t ty) {
-    int dx = (int)tx - (int)g.playerX;
-    int dy = (int)ty - (int)g.playerY;
-    int sx = 0;
-    int sy = 0;
-    if (dx > 0) sx = 1;
-    else if (dx < 0) sx = -1;
-    if (dy > 0) sy = 1;
-    else if (dy < 0) sy = -1;
-    int ax = dx < 0 ? -dx : dx;
-    int ay = dy < 0 ? -dy : dy;
-    if (ax >= ay) {
-        if (!tryStep(g, sx, 0)) tryStep(g, 0, sy);
-    } else {
-        if (!tryStep(g, 0, sy)) tryStep(g, sx, 0);
+    const bool standOn = walkable(g.cells[ty][tx].ground);
+    const int start = (int)g.playerY * MAP_W + (int)g.playerX;
+    parent[start] = 0xFFFF;
+    qx[0] = g.playerX;
+    qy[0] = g.playerY;
+    int qh = 0;
+    int qt = 1;
+    int found = -1;
+
+    while (qh < qt) {
+        const int x = qx[qh];
+        const int y = qy[qh];
+        qh++;
+        const int here = y * MAP_W + x;
+        if (here != start) {
+            if (standOn && x == (int)tx && y == (int)ty) {
+                found = here;
+                break;
+            }
+            if (!standOn) {
+                int dx = x > (int)tx ? x - (int)tx : (int)tx - x;
+                int dy = y > (int)ty ? y - (int)ty : (int)ty - y;
+                if ((dx > dy ? dx : dy) <= 1) {
+                    found = here;
+                    break;
+                }
+            }
+        }
+
+        const int towardX = ((int)tx == x) ? 0 : ((int)tx > x ? 1 : -1);
+        const int towardY = ((int)ty == y) ? 0 : ((int)ty > y ? 1 : -1);
+        const int dirs[4][2] = {
+            {towardX != 0 ? towardX : 1, 0},
+            {0, towardY != 0 ? towardY : 1},
+            {towardX != 0 ? -towardX : -1, 0},
+            {0, towardY != 0 ? -towardY : -1}
+        };
+        for (int d = 0; d < 4; ++d) {
+            const int nx = x + dirs[d][0];
+            const int ny = y + dirs[d][1];
+            if (dirs[d][0] == 0 && dirs[d][1] == 0) continue;
+            if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+            const int ni = ny * MAP_W + nx;
+            if (parent[ni] != 0) continue;
+            if (!walkable(g.cells[ny][nx].ground)) continue;
+            if (!standOn && nx == (int)tx && ny == (int)ty) continue;
+            parent[ni] = (uint16_t)(here + 1);
+            qx[qt] = (uint8_t)nx;
+            qy[qt] = (uint8_t)ny;
+            qt++;
+        }
     }
+
+    if (found < 0) return false;
+    int cur = found;
+    for (int guard = 0; parent[cur] != 0xFFFF && (int)parent[cur] - 1 != start && guard < count; ++guard) {
+        cur = (int)parent[cur] - 1;
+    }
+    if (parent[cur] == 0xFFFF) return false;
+    g.playerX = (uint8_t)(cur % MAP_W);
+    g.playerY = (uint8_t)(cur / MAP_W);
+    return true;
 }
 
 uint8_t gameArtAt(uint8_t x, uint8_t y) {
@@ -256,30 +330,87 @@ void gameUpdate(GameState& g, uint32_t dtMs) {
 void gameSelectTool(GameState& g, Tool tool) {
     if (tool >= TOOL_COUNT) return;
     g.tool = tool;
+    static const char* names[TOOL_COUNT] = {"Hoe", "Water", "Seed", "Harvest"};
+    setToast(g, names[tool]);
+}
+
+static int tileDist(const GameState& g, uint8_t tx, uint8_t ty) {
+    int dx = tx > g.playerX ? tx - g.playerX : g.playerX - tx;
+    int dy = ty > g.playerY ? ty - g.playerY : g.playerY - ty;
+    return dx > dy ? dx : dy;
+}
+
+static bool toolReady(const GameState& g, const Cell& cell) {
+    switch (g.tool) {
+        case TOOL_HOE:
+            return cell.crop == 0 && (cell.ground == G_GRASS || cell.ground == G_SOIL);
+        case TOOL_WATER:
+            return cell.ground == G_TILLED && cell.watered == 0;
+        case TOOL_SEED:
+            return cell.ground == G_TILLED && cell.crop == 0 && g.seeds > 0;
+        case TOOL_HARVEST:
+            return cell.crop != 0 && cell.stage >= CROP_MATURE;
+        default:
+            return false;
+    }
+}
+
+static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
+    Cell& cell = g.cells[ty][tx];
+    if (cell.ground == G_BED) {
+        useBed(g);
+        return;
+    }
+    if (cell.ground == G_BIN) {
+        useBin(g);
+        return;
+    }
+    useTool(g, cell);
 }
 
 void gameTapTile(GameState& g, uint8_t tx, uint8_t ty) {
     if (tx >= MAP_W || ty >= MAP_H) return;
 
-    int dx = tx > g.playerX ? tx - g.playerX : g.playerX - tx;
-    int dy = ty > g.playerY ? ty - g.playerY : g.playerY - ty;
-    int dist = dx > dy ? dx : dy;
-
-    if (dist <= 1) {
-        Cell& cell = g.cells[ty][tx];
-        if (cell.ground == G_BED) {
-            useBed(g);
-            return;
-        }
-        if (cell.ground == G_BIN) {
-            useBin(g);
-            return;
-        }
-        useTool(g, cell);
+    if (tileDist(g, tx, ty) <= 1) {
+        g.hasDest = false;
+        actOnTile(g, tx, ty);
         return;
     }
 
-    stepToward(g, tx, ty);
+    g.destX = tx;
+    g.destY = ty;
+    g.hasDest = true;
+}
+
+// Keeps walking after the finger lifts, one tile per call, until the farmer
+// is standing on the tapped tile. A door or the shipping bin is used on arrival.
+void gameFollow(GameState& g) {
+    if (!g.hasDest) return;
+    if (g.destX >= MAP_W || g.destY >= MAP_H) {
+        g.hasDest = false;
+        return;
+    }
+    if (g.playerX == g.destX && g.playerY == g.destY) {
+        g.hasDest = false;
+        return;
+    }
+
+    const Cell& cell = g.cells[g.destY][g.destX];
+    if (tileDist(g, g.destX, g.destY) <= 1) {
+        if (cell.ground == G_BED || cell.ground == G_BIN || toolReady(g, cell)) {
+            g.hasDest = false;
+            actOnTile(g, g.destX, g.destY);
+            return;
+        }
+        if (!walkable(cell.ground)) {
+            g.hasDest = false;
+            return;
+        }
+    }
+    if (!stepToward(g, g.destX, g.destY)) {
+        g.hasDest = false;
+        setToast(g, "Can't go there");
+    }
 }
 
 static const char B64_ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

@@ -3,7 +3,6 @@
 #include <WiFi.h>
 
 #include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
 
 #include "Assets.h"
 #include "Config.h"
@@ -26,23 +25,26 @@
 // for the tile currently being drawn (512 bytes on the stack). Night is a
 // channel scale at expand time, not a fullscreen alpha pass.
 //
-// Touch shares VSPI with the panel. XPT2046_Touchscreen::begin() calls
-// SPI.begin() with the default ESP32 pins and would disconnect the display.
-// setup() puts SCLK/MISO/MOSI back on 14/12/13 immediately after that call.
+// The touch chip is on HSPI (clock 25, data out 32, data in 39, select 33).
+// Reading it on the display bus never saw a finger.
 // ---------------------------------------------------------------------------
 
 extern "C" bool btStop(void);
 
 static TFT_eSPI tft;
 static TFT_eSprite spr(&tft);
-// IRQ is GPIO 36, which cannot wake this library reliably. Poll pressure instead.
-static XPT2046_Touchscreen ts(PIN_TOUCH_CS);
+static SPIClass touchSpi(HSPI);
 static GameState game;
 static bool fullFrame = false;
 
 static uint32_t lastMs = 0;
 static uint32_t lastDrawMs = 0;
-static uint32_t lastTouchMs = 0;
+static uint32_t nextStepMs = 0;
+static uint32_t lastHitMs = 0;
+static bool fingerDown = false;
+static bool seenHit = false;
+static int holdX = 0;
+static int holdY = 0;
 
 struct View {
     TFT_eSprite* spr;
@@ -310,39 +312,76 @@ static void render() {
     }
 }
 
-static uint16_t touchAxis(uint8_t command) {
-    digitalWrite(PIN_TOUCH_CS, LOW);
-    SPI.transfer(command);
-    uint16_t value = SPI.transfer16(0) >> 3;
-    digitalWrite(PIN_TOUCH_CS, HIGH);
-    return value;
+// Chip-select stays low for the whole conversion. Pulsing it between bytes
+// was powering the controller down and dropping most taps.
+static uint16_t xptRead(uint8_t command) {
+    touchSpi.transfer(command);
+    uint16_t hi = touchSpi.transfer(0);
+    uint16_t lo = touchSpi.transfer(0);
+    return (uint16_t)(((hi << 8) | lo) >> 3);
+}
+
+static bool closestPair(int a, int b, int c, int& avg) {
+    int ab = a > b ? a - b : b - a;
+    int ac = a > c ? a - c : c - a;
+    int bc = b > c ? b - c : c - b;
+    const int limit = 160;
+    if (ab <= ac && ab <= bc) {
+        if (ab > limit) return false;
+        avg = (a + b) / 2;
+        return true;
+    }
+    if (ac <= ab && ac <= bc) {
+        if (ac > limit) return false;
+        avg = (a + c) / 2;
+        return true;
+    }
+    if (bc > limit) return false;
+    avg = (b + c) / 2;
+    return true;
 }
 
 static bool readTouch(int& sx, int& sy) {
-    // The display and card must ignore these clocks. Read the controller
-    // directly so a missing IRQ edge cannot swallow the tap.
     digitalWrite(PIN_TFT_CS, HIGH);
     digitalWrite(PIN_SD_CS, HIGH);
-    digitalWrite(PIN_TOUCH_CS, HIGH);
-    SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
-    SPI.beginTransaction(SPISettings(2500000, MSBFIRST, SPI_MODE0));
 
-    uint16_t z1 = touchAxis(0xB1);
-    uint16_t z2 = touchAxis(0xC1);
+    touchSpi.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(PIN_TOUCH_CS, LOW);
+    delayMicroseconds(8);
+
+    // 0xB1 / 0xC1 / 0xD1 / 0x91 keep the ADC awake (PD0 = 1). The first
+    // conversion after idle is discarded.
+    (void)xptRead(0xB1);
+    uint16_t z1 = xptRead(0xB1);
+    uint16_t z2 = xptRead(0xC1);
     int pressure = (int)z1 + 4095 - (int)z2;
-    if (pressure < 250) {
-        SPI.endTransaction();
+    bool pressed = pressure > 80 && pressure < 5000;
+    if (!pressed) {
+        (void)xptRead(0x90);
         digitalWrite(PIN_TOUCH_CS, HIGH);
+        touchSpi.endTransaction();
         return false;
     }
 
-    uint16_t rawX = touchAxis(0xD0);
-    uint16_t rawY = touchAxis(0x90);
-    SPI.endTransaction();
+    int xs[3];
+    int ys[3];
+    (void)xptRead(0xD1);
+    for (int i = 0; i < 3; ++i) {
+        xs[i] = xptRead(0xD1);
+        ys[i] = xptRead(0x91);
+    }
+    (void)xptRead(0x90);
     digitalWrite(PIN_TOUCH_CS, HIGH);
+    touchSpi.endTransaction();
 
-    int ax = TOUCH_SWAP_XY ? rawY : rawX;
-    int ay = TOUCH_SWAP_XY ? rawX : rawY;
+    int axAvg = 0;
+    int ayAvg = 0;
+    if (!closestPair(xs[0], xs[1], xs[2], axAvg)) return false;
+    if (!closestPair(ys[0], ys[1], ys[2], ayAvg)) return false;
+    if (axAvg < 80 || axAvg > 4080 || ayAvg < 80 || ayAvg > 4080) return false;
+
+    int ax = TOUCH_SWAP_XY ? ayAvg : axAvg;
+    int ay = TOUCH_SWAP_XY ? axAvg : ayAvg;
     long mx = map((long)ax, TOUCH_X_MIN, TOUCH_X_MAX, 0L, (long)SCREEN_W);
     long my = map((long)ay, TOUCH_Y_MIN, TOUCH_Y_MAX, 0L, (long)SCREEN_H);
     if (TOUCH_INVERT_X) mx = (SCREEN_W - 1) - mx;
@@ -353,16 +392,21 @@ static bool readTouch(int& sx, int& sy) {
     if (my >= SCREEN_H) my = SCREEN_H - 1;
     sx = (int)mx;
     sy = (int)my;
-    Serial.printf("raw %u %u z %d -> %d %d\n", rawX, rawY, pressure, sx, sy);
     return true;
 }
 
-static void dispatchTouch(int sx, int sy) {
-    if (sy >= HOTBAR_Y) {
+static void dispatchTouch(int sx, int sy, bool freshPress) {
+    if (sy >= HOTBAR_HIT_Y) {
         int slot = sx / (SCREEN_W / TOOL_COUNT);
         if (slot < 0) slot = 0;
         if (slot >= TOOL_COUNT) slot = TOOL_COUNT - 1;
-        gameSelectTool(game, (Tool)slot);
+        static int heldSlot = -1;
+        if (freshPress) heldSlot = -1;
+        game.hasDest = false;
+        if (slot != heldSlot) {
+            heldSlot = slot;
+            gameSelectTool(game, (Tool)slot);
+        }
         return;
     }
     if (sy < HUD_H) return;
@@ -420,13 +464,13 @@ void setup() {
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
 
-    // Library begin() resets VSPI to pins 18/19/23. Restore the CYD bus.
-    // Chip-select stays under software control (TFT 15, touch 33, SD 5).
-    ts.begin();
-    ts.setRotation(1);
+    // Display stays on VSPI. Touch uses its own clock and data pins.
+    // CS is toggled by hand, so the SPI driver must not own that pin.
     SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
+    touchSpi.begin(PIN_TOUCH_CLK, PIN_TOUCH_MISO, PIN_TOUCH_MOSI, -1);
     digitalWrite(PIN_TOUCH_CS, HIGH);
     digitalWrite(PIN_SD_CS, HIGH);
+    digitalWrite(PIN_TFT_CS, HIGH);
 
     setupSprite();
     gameInit(game);
@@ -464,15 +508,66 @@ void loop() {
         if (gameSave(game)) game.saveDirty = false;
     }
 
-    int sx = 0;
-    int sy = 0;
-    if ((now - lastTouchMs) >= TOUCH_DEBOUNCE_MS && readTouch(sx, sy)) {
-        lastTouchMs = now;
-        dispatchTouch(sx, sy);
-        // Input redraw is immediate. The 15 fps cap still paces the clock.
+    static uint32_t lastPollMs = 0;
+    static bool sampleReady = false;
+    if ((now - lastPollMs) >= 12) {
+        lastPollMs = now;
+        int sx = 0;
+        int sy = 0;
+        if (readTouch(sx, sy)) {
+            seenHit = true;
+            sampleReady = true;
+            lastHitMs = now;
+            if (fingerDown &&
+                (sx > holdX ? sx - holdX : holdX - sx) <= 12 &&
+                (sy > holdY ? sy - holdY : holdY - sy) <= 12) {
+                sx = holdX;
+                sy = holdY;
+            } else {
+                holdX = sx;
+                holdY = sy;
+            }
+        }
+    }
+
+    // Held across a frame redraw. The full-screen push takes longer than one sample.
+    // Tools fire on the press only. A finger that stays down keeps steering the walk.
+    bool down = seenHit && (now - lastHitMs) < 220;
+    if (down && !fingerDown) {
+        fingerDown = true;
+        sampleReady = false;
+        Serial.printf("touch %d %d\n", holdX, holdY);
+        dispatchTouch(holdX, holdY, true);
+        if (game.hasDest) gameFollow(game);
+        nextStepMs = now + TOUCH_DEBOUNCE_MS;
         render();
         lastDrawMs = millis();
-        return;
+    } else if (down && sampleReady && now >= nextStepMs) {
+        sampleReady = false;
+        nextStepMs = now + TOUCH_DEBOUNCE_MS;
+        if (holdY >= HOTBAR_HIT_Y) {
+            dispatchTouch(holdX, holdY, false);
+        } else if (holdY >= HUD_H) {
+            int tx = holdX / TILE;
+            int ty = holdY / TILE;
+            int dx = tx > game.playerX ? tx - game.playerX : game.playerX - tx;
+            int dy = ty > game.playerY ? ty - game.playerY : game.playerY - ty;
+            if (tx >= 0 && ty >= 0 && tx < MAP_W && ty < MAP_H && (dx > 1 || dy > 1)) {
+                gameTapTile(game, (uint8_t)tx, (uint8_t)ty);
+                if (game.hasDest) gameFollow(game);
+            }
+        }
+        render();
+        lastDrawMs = millis();
+    } else if (!down) {
+        fingerDown = false;
+        sampleReady = false;
+        if (game.hasDest && now >= nextStepMs) {
+            gameFollow(game);
+            nextStepMs = now + TOUCH_DEBOUNCE_MS;
+            render();
+            lastDrawMs = millis();
+        }
     }
 
     // A per-tile dirty mask would replace this full refresh if the map

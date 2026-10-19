@@ -100,17 +100,18 @@ def main():
         stamp(pos[0], pos[1], flowers[i % len(flowers)], G_PATH)
     stamp(0, 5, rocks, G_FENCE)
     stamp(7, 7, lamp, G_FENCE)
-    stamp(6, 8, ip.composite(chest, grass_tile), G_BIN)
+    # Chest sits beside the lane so the lane itself stays open.
+    stamp(9, 8, ip.composite(chest, grass_tile), G_BIN)
 
-    # Cobble-free dirt lane from the door to the field.
-    for pos in ((3, 8), (4, 8), (4, 9), (5, 8), (6, 8), (7, 8), (8, 8)):
+    # Dirt lane from the door, through both gates, to the gap between the plots.
+    for pos in ((3, 8), (4, 8), (4, 9), (5, 8), (6, 8), (7, 8), (8, 8), (8, 9), (9, 9)):
         if ground[pos[1]][pos[0]] == G_GRASS:
             stamp(pos[0], pos[1], path, G_PATH)
 
-    # Pasture fence. Gate sits in front of the lane.
+    # Pasture fence. Gates at the door and between the two plots.
     for x in range(1, 19):
         piece = fence_post if x in (1, 18) else fence_h
-        if x not in (4, 5):
+        if x not in (4, 5, 8, 9):
             stamp(x, 9, piece, G_FENCE)
         stamp(x, 12, piece, G_FENCE)
     for y in range(10, 12):

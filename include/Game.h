@@ -50,11 +50,15 @@ struct GameState {
     uint32_t minuteAccumMs;
     uint32_t growAccumMs;
     bool saveDirty;
+    uint8_t destX;
+    uint8_t destY;
+    bool hasDest;
 };
 
 void gameInit(GameState& g);
 void gameUpdate(GameState& g, uint32_t dtMs);
 void gameTapTile(GameState& g, uint8_t tx, uint8_t ty);
+void gameFollow(GameState& g);
 void gameSelectTool(GameState& g, Tool tool);
 uint8_t gameArtAt(uint8_t x, uint8_t y);
 uint8_t gamePlayerFrameArt(uint8_t frame);
