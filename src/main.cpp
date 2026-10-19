@@ -35,7 +35,8 @@ extern "C" bool btStop(void);
 
 static TFT_eSPI tft;
 static TFT_eSprite spr(&tft);
-static XPT2046_Touchscreen ts(PIN_TOUCH_CS, PIN_TOUCH_IRQ);
+// IRQ is GPIO 36, which cannot wake this library reliably. Poll pressure instead.
+static XPT2046_Touchscreen ts(PIN_TOUCH_CS);
 static GameState game;
 static bool fullFrame = false;
 
@@ -49,8 +50,16 @@ struct View {
     int height;
 };
 
-static constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
-    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+// The ILI9341 wants the high byte first. The sprite stores little-endian
+// values and pushSprite does not swap them, so green was drawn as brown
+// and then looked cyan once inversion was turned on.
+static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    uint16_t color = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+    return (uint16_t)((color << 8) | (color >> 8));
+}
+
+static inline uint16_t swap565(uint16_t color) {
+    return (uint16_t)((color << 8) | (color >> 8));
 }
 
 static const char* const TOOL_LABELS[TOOL_COUNT] = {
@@ -78,7 +87,7 @@ static uint16_t palColor(uint8_t index, uint8_t shadeNum) {
     // pgm_read_word on this chip is a plain load, so a RAM palette from the
     // SD card and the flash fallback share one call.
     uint16_t color = assetsReady() ? assetPalette(index) : pgm_read_word(&PALETTE[index]);
-    return shade565(color, shadeNum);
+    return swap565(shade565(color, shadeNum));
 }
 
 static const uint8_t* sceneryTile(uint8_t id) {
@@ -301,20 +310,39 @@ static void render() {
     }
 }
 
+static uint16_t touchAxis(uint8_t command) {
+    digitalWrite(PIN_TOUCH_CS, LOW);
+    SPI.transfer(command);
+    uint16_t value = SPI.transfer16(0) >> 3;
+    digitalWrite(PIN_TOUCH_CS, HIGH);
+    return value;
+}
+
 static bool readTouch(int& sx, int& sy) {
-    // Hold the panel's chip-select high so a touch transfer is ignored by
-    // the ILI9341. The touch library drives its own CS. GPIO 36 is sampled
-    // inside touched(); it has no internal pull-up, and the XPT2046 drives it.
+    // The display and card must ignore these clocks. Read the controller
+    // directly so a missing IRQ edge cannot swallow the tap.
     digitalWrite(PIN_TFT_CS, HIGH);
-    if (!ts.touched()) {
+    digitalWrite(PIN_SD_CS, HIGH);
+    digitalWrite(PIN_TOUCH_CS, HIGH);
+    SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
+    SPI.beginTransaction(SPISettings(2500000, MSBFIRST, SPI_MODE0));
+
+    uint16_t z1 = touchAxis(0xB1);
+    uint16_t z2 = touchAxis(0xC1);
+    int pressure = (int)z1 + 4095 - (int)z2;
+    if (pressure < 250) {
+        SPI.endTransaction();
         digitalWrite(PIN_TOUCH_CS, HIGH);
         return false;
     }
-    TS_Point raw = ts.getPoint();
+
+    uint16_t rawX = touchAxis(0xD0);
+    uint16_t rawY = touchAxis(0x90);
+    SPI.endTransaction();
     digitalWrite(PIN_TOUCH_CS, HIGH);
 
-    int ax = TOUCH_SWAP_XY ? raw.y : raw.x;
-    int ay = TOUCH_SWAP_XY ? raw.x : raw.y;
+    int ax = TOUCH_SWAP_XY ? rawY : rawX;
+    int ay = TOUCH_SWAP_XY ? rawX : rawY;
     long mx = map((long)ax, TOUCH_X_MIN, TOUCH_X_MAX, 0L, (long)SCREEN_W);
     long my = map((long)ay, TOUCH_Y_MIN, TOUCH_Y_MAX, 0L, (long)SCREEN_H);
     if (TOUCH_INVERT_X) mx = (SCREEN_W - 1) - mx;
@@ -325,7 +353,7 @@ static bool readTouch(int& sx, int& sy) {
     if (my >= SCREEN_H) my = SCREEN_H - 1;
     sx = (int)mx;
     sy = (int)my;
-    Serial.printf("raw %d %d -> %d %d\n", raw.x, raw.y, sx, sy);
+    Serial.printf("raw %u %u z %d -> %d %d\n", rawX, rawY, pressure, sx, sy);
     return true;
 }
 
@@ -395,6 +423,7 @@ void setup() {
     // Library begin() resets VSPI to pins 18/19/23. Restore the CYD bus.
     // Chip-select stays under software control (TFT 15, touch 33, SD 5).
     ts.begin();
+    ts.setRotation(1);
     SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
     digitalWrite(PIN_TOUCH_CS, HIGH);
     digitalWrite(PIN_SD_CS, HIGH);

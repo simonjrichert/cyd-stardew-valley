@@ -41,7 +41,7 @@ static constexpr int  TOUCH_Y_MIN    = 240;
 static constexpr int  TOUCH_Y_MAX    = 3800;
 static constexpr bool TOUCH_SWAP_XY  = false;
 static constexpr bool TOUCH_INVERT_X = true;
-static constexpr bool TOUCH_INVERT_Y = false;
+static constexpr bool TOUCH_INVERT_Y = true;
 
 // 100 ms of real time is one game minute, so a full day lasts ~2.4 minutes.
 // Watered crops advance one stage every GROW_INTERVAL_MS (mature at stage 3).
