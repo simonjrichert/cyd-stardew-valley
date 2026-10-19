@@ -158,6 +158,13 @@ class Atlas:
             self.tiles.append(key)
         return self.index[key]
 
+    def add_unique(self, tile, allow_clear=False):
+        indexed = []
+        for row in tile:
+            indexed.append(tuple(self.color_index(r, g, b, a, allow_clear) for r, g, b, a in row))
+        self.tiles.append(tuple(indexed))
+        return len(self.tiles) - 1
+
 
 def shade(tile, num, den):
     out = []
@@ -235,6 +242,37 @@ def write_png(path, art_tiles, atlas):
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
     path.write_bytes(png)
+
+
+CUTE = Path(r"C:\Users\simon\Downloads\Cute_Fantasy_Free\Cute_Fantasy_Free")
+
+
+def grab32(img, fx, fy):
+    _w, _h, bpp, rows = img
+    tiles = []
+    ox, oy = fx * 32, fy * 32
+    for ty in range(2):
+        for tx in range(2):
+            tile = []
+            for y in range(16):
+                row = []
+                for x in range(16):
+                    row.append(pix(rows, bpp, ox + tx * 16 + x, oy + ty * 16 + y))
+                tile.append(row)
+            tiles.append(tile)
+    return tiles
+
+
+def downscale32(img, fx, fy):
+    _w, _h, bpp, rows = img
+    ox, oy = fx * 32, fy * 32
+    tile = []
+    for y in range(16):
+        row = []
+        for x in range(16):
+            row.append(pix(rows, bpp, ox + x * 2, oy + y * 2))
+        tile.append(row)
+    return tile
 
 
 def main():

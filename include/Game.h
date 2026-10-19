@@ -60,6 +60,7 @@ uint8_t gameArtAt(uint8_t x, uint8_t y);
 uint8_t gamePlayerFrameArt(uint8_t frame);
 uint8_t gameChickenFrameArt(uint8_t frame);
 bool gameIsChicken(uint8_t x, uint8_t y);
+uint8_t gameAnimArt(uint8_t id);
 bool gameSave(const GameState& g);
 bool gameLoad(GameState& g);
 

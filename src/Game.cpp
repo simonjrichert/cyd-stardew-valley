@@ -167,7 +167,28 @@ uint8_t gameChickenFrameArt(uint8_t frame) {
 }
 
 bool gameIsChicken(uint8_t x, uint8_t y) {
-    return gameArtAt(x, y) == CHICKEN_ANIM[0];
+    uint8_t id = gameArtAt(x, y);
+    for (uint8_t i = 0; i < 4; ++i) {
+        if (id == CHICKEN_ANIM[i]) return true;
+    }
+    return false;
+}
+
+// 32x32 animals are stored as four tiles per frame. Swap the pair so they
+// bob between the two frames in the sheet.
+uint8_t gameAnimArt(uint8_t id) {
+    const uint8_t bob = (uint8_t)((millis() / 280) & 1);
+    const uint8_t first[4] = {PIG_A, SHEEP_A, COW_A, SLIME_A};
+    const uint8_t second[4] = {PIG_B, SHEEP_B, COW_B, SLIME_B};
+    for (uint8_t i = 0; i < 4; ++i) {
+        if (id >= first[i] && id < first[i] + 4) {
+            return (bob ? second[i] : first[i]) + (id - first[i]);
+        }
+        if (id >= second[i] && id < second[i] + 4) {
+            return (bob ? second[i] : first[i]) + (id - second[i]);
+        }
+    }
+    return id;
 }
 
 void gameInit(GameState& g) {

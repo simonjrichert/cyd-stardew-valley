@@ -108,6 +108,8 @@ static const uint8_t* tileFor(const Cell& cell, int tx, int ty) {
     uint8_t id = gameArtAt((uint8_t)tx, (uint8_t)ty);
     if (gameIsChicken((uint8_t)tx, (uint8_t)ty)) {
         id = gameChickenFrameArt((uint8_t)((millis() / 160) % 4));
+    } else {
+        id = gameAnimArt(id);
     }
     return sceneryTile(id);
 }
@@ -126,17 +128,26 @@ static void blitOpaque(TFT_eSprite& dst, int x, int y, const uint8_t* packed,
     dst.pushImage(x, y, TILE, TILE, buf);
 }
 
-static void blitPlayer(TFT_eSprite& dst, int x, int y, uint8_t shadeNum) {
-    // Idle.png is 4 frames across the top row. Cycle them so the farmer animates.
-    uint8_t frame = (uint8_t)((millis() / 180) % 4);
-    const uint8_t* sprite = sceneryTile(gamePlayerFrameArt(frame));
-    if (sprite == nullptr) sprite = namedTile(ASSET_PLAYER, TILE_PLAYER);
+static void blitTransparent(TFT_eSprite& dst, int x, int y, const uint8_t* sprite, uint8_t shadeNum) {
     for (int py = 0; py < TILE; ++py) {
         for (int px = 0; px < TILE; ++px) {
             uint8_t index = pgm_read_byte(sprite + py * TILE + px);
             if (index == PAL_SKIP) continue;
             dst.drawPixel(x + px, y + py, palColor(index, shadeNum));
         }
+    }
+}
+
+static void blitPlayer(TFT_eSprite& dst, int originY, uint8_t shadeNum) {
+    // Walk cycle from the Cute Fantasy sheet. Each frame is 32x32, four
+    // tiles, with the feet sitting on the player's tile.
+    uint8_t base = gamePlayerFrameArt((uint8_t)((millis() / 160) % 4));
+    int ox = (int)game.playerX * TILE;
+    int oy = (int)game.playerY * TILE - TILE - originY;
+    for (int q = 0; q < 4; ++q) {
+        int dx = (q & 1) * TILE;
+        int dy = (q >> 1) * TILE;
+        blitTransparent(dst, ox + dx, oy + dy, sceneryTile((uint8_t)(base + q)), shadeNum);
     }
 }
 
@@ -183,9 +194,10 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
         }
     }
 
-    int py = (int)game.playerY * TILE - v.originY;
-    if (py > -TILE && py < v.height) {
-        blitPlayer(*v.spr, (int)game.playerX * TILE, py, shadeNum);
+    int top = (int)game.playerY * TILE - TILE;
+    int bottom = (int)game.playerY * TILE + TILE;
+    if (bottom > v.originY && top < v.originY + v.height) {
+        blitPlayer(*v.spr, v.originY, shadeNum);
     }
 }
 
