@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// VSPI is the card. The display is on HSPI, so this bus is not shared.
+static SPIClass sdSpi(VSPI);
+static bool sdSpiReady = false;
 static bool sdMounted = false;
 static bool packReady = false;
 static uint8_t* pack = nullptr;
@@ -18,21 +21,23 @@ static uint16_t palCount = 0;
 static uint16_t artCount = 0;
 static uint16_t namedCount = 0;
 
-// The ILI9341 and XPT2046 share this bus. Their chip-selects have to stay
-// high while the card is clocked, and the card's select has to stay high
-// before the next display write.
+// Hold the other chip-selects high so a card transfer cannot be answered
+// by the panel. The card has its own clock and data pins.
 static void claimSdBus() {
     digitalWrite(PIN_TFT_CS, HIGH);
     digitalWrite(PIN_TOUCH_CS, HIGH);
-    digitalWrite(PIN_SD_CS, HIGH);
-    SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
+    if (!sdSpiReady) {
+        pinMode(PIN_SD_CS, OUTPUT);
+        digitalWrite(PIN_SD_CS, HIGH);
+        sdSpi.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, -1);
+        sdSpiReady = true;
+    }
 }
 
 static void releaseSdBus() {
     digitalWrite(PIN_SD_CS, HIGH);
     digitalWrite(PIN_TOUCH_CS, HIGH);
     digitalWrite(PIN_TFT_CS, HIGH);
-    SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
 }
 
 static bool readU16(File& file, uint16_t* out) {
@@ -51,7 +56,7 @@ static AssetBoot failPack(File& file, AssetBoot why) {
 
 AssetBoot assetsBegin() {
     claimSdBus();
-    sdMounted = SD.begin(PIN_SD_CS, SPI, 4000000);
+    sdMounted = SD.begin(PIN_SD_CS, sdSpi, 4000000);
     releaseSdBus();
     if (!sdMounted) {
         Serial.println("SD Card Mount Failed!");

@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <SPI.h>
 #include <WiFi.h>
 
 #include <TFT_eSPI.h>
@@ -25,15 +24,14 @@
 // for the tile currently being drawn (512 bytes on the stack). Night is a
 // channel scale at expand time, not a fullscreen alpha pass.
 //
-// The touch chip is on HSPI (clock 25, data out 32, data in 39, select 33).
-// Reading it on the display bus never saw a finger.
+// The display is HSPI. The card is VSPI. Touch is bit-banged on its own
+// pins so it does not take either of those buses.
 // ---------------------------------------------------------------------------
 
 extern "C" bool btStop(void);
 
 static TFT_eSPI tft;
 static TFT_eSprite spr(&tft);
-static SPIClass touchSpi(HSPI);
 static GameState game;
 static bool fullFrame = false;
 
@@ -275,7 +273,8 @@ static void drawToast(const View& v) {
     int chars = (int)strlen(game.toast);
     int w = chars * 6 + 8;
     int x = (SCREEN_W - w) / 2;
-    const int y = 178;
+    // Just under the status bar, centered. The 12 px box fits one 16 px strip.
+    const int y = HUD_H + 2;
     fillScreenRect(v, x, y, w, 12, rgb565(48, 32, 18));
     textAt(v, x + 4, y + 2, rgb565(248, 236, 210), game.toast);
 }
@@ -312,12 +311,34 @@ static void render() {
     }
 }
 
+static void touchBusBegin() {
+    pinMode(PIN_TOUCH_CLK, OUTPUT);
+    pinMode(PIN_TOUCH_MOSI, OUTPUT);
+    pinMode(PIN_TOUCH_MISO, INPUT);
+    digitalWrite(PIN_TOUCH_CLK, LOW);
+    digitalWrite(PIN_TOUCH_MOSI, LOW);
+}
+
+// Mode 0, about 500 kHz. Slow enough for the XPT2046 and off the hardware buses.
+static uint8_t touchTransfer(uint8_t out) {
+    uint8_t in = 0;
+    for (int bit = 7; bit >= 0; --bit) {
+        digitalWrite(PIN_TOUCH_MOSI, (out >> bit) & 1);
+        delayMicroseconds(1);
+        digitalWrite(PIN_TOUCH_CLK, HIGH);
+        delayMicroseconds(1);
+        in = (uint8_t)((in << 1) | (digitalRead(PIN_TOUCH_MISO) & 1));
+        digitalWrite(PIN_TOUCH_CLK, LOW);
+    }
+    return in;
+}
+
 // Chip-select stays low for the whole conversion. Pulsing it between bytes
 // was powering the controller down and dropping most taps.
 static uint16_t xptRead(uint8_t command) {
-    touchSpi.transfer(command);
-    uint16_t hi = touchSpi.transfer(0);
-    uint16_t lo = touchSpi.transfer(0);
+    touchTransfer(command);
+    uint16_t hi = touchTransfer(0);
+    uint16_t lo = touchTransfer(0);
     return (uint16_t)(((hi << 8) | lo) >> 3);
 }
 
@@ -345,7 +366,6 @@ static bool readTouch(int& sx, int& sy) {
     digitalWrite(PIN_TFT_CS, HIGH);
     digitalWrite(PIN_SD_CS, HIGH);
 
-    touchSpi.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
     digitalWrite(PIN_TOUCH_CS, LOW);
     delayMicroseconds(8);
 
@@ -359,7 +379,6 @@ static bool readTouch(int& sx, int& sy) {
     if (!pressed) {
         (void)xptRead(0x90);
         digitalWrite(PIN_TOUCH_CS, HIGH);
-        touchSpi.endTransaction();
         return false;
     }
 
@@ -372,7 +391,6 @@ static bool readTouch(int& sx, int& sy) {
     }
     (void)xptRead(0x90);
     digitalWrite(PIN_TOUCH_CS, HIGH);
-    touchSpi.endTransaction();
 
     int axAvg = 0;
     int ayAvg = 0;
@@ -464,10 +482,8 @@ void setup() {
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
 
-    // Display stays on VSPI. Touch uses its own clock and data pins.
-    // CS is toggled by hand, so the SPI driver must not own that pin.
-    SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI);
-    touchSpi.begin(PIN_TOUCH_CLK, PIN_TOUCH_MISO, PIN_TOUCH_MOSI, -1);
+    // CS is toggled by hand, so neither SPI driver owns the touch or card pin.
+    touchBusBegin();
     digitalWrite(PIN_TOUCH_CS, HIGH);
     digitalWrite(PIN_SD_CS, HIGH);
     digitalWrite(PIN_TFT_CS, HIGH);

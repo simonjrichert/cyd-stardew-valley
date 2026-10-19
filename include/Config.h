@@ -24,10 +24,12 @@ static constexpr int PIN_TOUCH_CLK  = 25;
 static constexpr int PIN_TOUCH_MISO = 39;
 static constexpr int PIN_TOUCH_MOSI = 32;
 
-// MicroSD shares VSPI with the display and touch. GPIO 5 is the card's
-// chip-select. It must stay high during TFT and touch transfers, or the
-// card answers those clocks and the picture breaks up.
-static constexpr int PIN_SD_CS = 5;
+// The microSD slot is the default VSPI bus, not the display bus.
+// GPIO 5 is the card's chip-select and must stay high while the panel is drawn.
+static constexpr int PIN_SD_CS   = 5;
+static constexpr int PIN_SD_SCK  = 18;
+static constexpr int PIN_SD_MISO = 19;
+static constexpr int PIN_SD_MOSI = 23;
 
 static constexpr int SCREEN_W = 320;
 static constexpr int SCREEN_H = 240;

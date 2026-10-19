@@ -409,7 +409,6 @@ void gameFollow(GameState& g) {
     }
     if (!stepToward(g, g.destX, g.destY)) {
         g.hasDest = false;
-        setToast(g, "Can't go there");
     }
 }
 
