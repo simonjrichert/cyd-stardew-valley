@@ -493,14 +493,14 @@ void setup() {
     // The framebuffer is allocated first so the 150 KB block stays contiguous.
     // Sprite bytes from the card are a smaller malloc after that.
     const char* sdNote = nullptr;
-    switch (assetsBegin()) {
-        case ASSET_NO_CARD: sdNote = "No SD card"; break;
-        case ASSET_NO_PACK: sdNote = "No /sprites/atlas.bin"; break;
-        case ASSET_BAD_PACK: sdNote = "Bad atlas.bin"; break;
-        case ASSET_OK:
-            if (gameLoad(game)) sdNote = "Save loaded";
-            break;
-    }
+    AssetBoot boot = assetsBegin();
+    // The save is independent of the sprite pack. A rejected atlas used to
+    // skip gameLoad and send the farm back to day 1.
+    bool loaded = boot != ASSET_NO_CARD && gameLoad(game);
+    if (loaded) sdNote = "Save loaded";
+    else if (boot == ASSET_NO_CARD) sdNote = "No SD card";
+    else if (boot == ASSET_NO_PACK) sdNote = "No /sprites/atlas.bin";
+    else if (boot == ASSET_BAD_PACK) sdNote = "Bad atlas.bin";
     if (sdNote != nullptr) {
         strncpy(game.toast, sdNote, sizeof(game.toast) - 1);
         game.toast[sizeof(game.toast) - 1] = '\0';
@@ -514,7 +514,9 @@ void loop() {
     uint32_t now = millis();
     uint32_t dt = now - lastMs;
     lastMs = now;
-    gameUpdate(game, dt);
+    // No touch for a while: freeze the day clock. Crop timers still run.
+    bool advanceClock = seenHit && (now - lastHitMs) < IDLE_CLOCK_MS;
+    gameUpdate(game, dt, advanceClock);
 
     // Writes are throttled. The card select is raised again before the
     // display refresh inside assetsWriteFile.

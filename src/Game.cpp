@@ -144,14 +144,36 @@ static void useBin(GameState& g) {
     markSave(g);
 }
 
-static void useBed(GameState& g) {
+static bool growWatered(GameState& g) {
+    bool grew = false;
+    for (int y = 0; y < MAP_H; ++y) {
+        for (int x = 0; x < MAP_W; ++x) {
+            Cell& cell = g.cells[y][x];
+            if (cell.crop && cell.watered && cell.stage < CROP_MATURE) {
+                cell.stage++;
+                grew = true;
+            }
+        }
+    }
+    return grew;
+}
+
+// End of the day: watered crops grow one stage, the field dries, and the
+// farmer wakes at 06:00 with a full bar. The bed and midnight share this.
+static void sleepMorning(GameState& g) {
+    growWatered(g);
+    dryAll(g);
     g.stamina = STAMINA_MAX;
     g.hour = 6;
     g.minute = 0;
+    g.minuteAccumMs = 0;
     g.day++;
-    dryAll(g);
     setToast(g, "Rested until 06:00");
     markSave(g);
+}
+
+static void useBed(GameState& g) {
+    sleepMorning(g);
 }
 
 // Shortest walk around fences, water, and the house. One tile of that path
@@ -290,22 +312,39 @@ void gameInit(GameState& g) {
     setToast(g, "Hoe soil, water, plant");
 }
 
-void gameUpdate(GameState& g, uint32_t dtMs) {
+void gameUpdate(GameState& g, uint32_t dtMs, bool advanceClock) {
     // A stalled frame (upload, breakpoint) must not fast-forward the farm.
     if (dtMs > 1000) dtMs = 1000;
 
-    g.minuteAccumMs += dtMs;
-    while (g.minuteAccumMs >= MS_PER_GAME_MINUTE) {
-        g.minuteAccumMs -= MS_PER_GAME_MINUTE;
-        g.minute++;
-        if (g.minute >= 60) {
-            g.minute = 0;
-            g.hour++;
-            if (g.hour >= 24) {
-                g.hour = 0;
-                g.day++;
-                dryAll(g);
-                markSave(g);
+    if (!advanceClock) {
+        // The day is frozen, so midnight will not refill the bar. Rest here
+        // instead: one point each 200 ms, empty to full in about 20 seconds.
+        static uint32_t restMs = 0;
+        restMs += dtMs;
+        if (restMs >= 200) {
+            uint32_t points = restMs / 200;
+            restMs %= 200;
+            if (g.stamina < STAMINA_MAX) {
+                uint16_t sum = (uint16_t)g.stamina + (uint16_t)points;
+                if (sum > STAMINA_MAX) sum = STAMINA_MAX;
+                if ((uint8_t)sum != g.stamina) {
+                    g.stamina = (uint8_t)sum;
+                    markSave(g);
+                }
+            }
+        }
+    } else {
+        g.minuteAccumMs += dtMs;
+        while (g.minuteAccumMs >= MS_PER_GAME_MINUTE) {
+            g.minuteAccumMs -= MS_PER_GAME_MINUTE;
+            g.minute++;
+            if (g.minute >= 60) {
+                g.minute = 0;
+                g.hour++;
+                if (g.hour >= 24) {
+                    sleepMorning(g);
+                    break;
+                }
             }
         }
     }
@@ -314,15 +353,7 @@ void gameUpdate(GameState& g, uint32_t dtMs) {
     bool grew = false;
     while (g.growAccumMs >= GROW_INTERVAL_MS) {
         g.growAccumMs -= GROW_INTERVAL_MS;
-        for (int y = 0; y < MAP_H; ++y) {
-            for (int x = 0; x < MAP_W; ++x) {
-                Cell& cell = g.cells[y][x];
-                if (cell.crop && cell.watered && cell.stage < CROP_MATURE) {
-                    cell.stage++;
-                    grew = true;
-                }
-            }
-        }
+        if (growWatered(g)) grew = true;
     }
     if (grew) markSave(g);
 }
@@ -479,11 +510,24 @@ bool gameSave(const GameState& g) {
     return assetsWriteFile(SD_SAVE_PATH, (const uint8_t*)body, (size_t)n);
 }
 
+static bool gameLoadBody(GameState& g, char* body);
+
 bool gameLoad(GameState& g) {
+    static const char* paths[] = { SD_SAVE_PATH, "/save.json.bak", "/save.json.tmp" };
     static char body[2048];
-    size_t n = 0;
-    if (!assetsReadFile(SD_SAVE_PATH, (uint8_t*)body, sizeof(body) - 1, &n)) return false;
-    body[n] = '\0';
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        size_t n = 0;
+        if (!assetsReadFile(paths[i], (uint8_t*)body, sizeof(body) - 1, &n)) continue;
+        body[n] = '\0';
+        if (gameLoadBody(g, body)) {
+            Serial.printf("Save loaded from %s\n", paths[i]);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool gameLoadBody(GameState& g, char* body) {
     if (jsonInt(body, "v", 0) != 1) return false;
 
     uint8_t decoded[sizeof(g.cells)];

@@ -48,10 +48,13 @@ static constexpr bool TOUCH_SWAP_XY  = true;
 static constexpr bool TOUCH_INVERT_X = false;
 static constexpr bool TOUCH_INVERT_Y = false;
 
-// 100 ms of real time is one game minute, so a full day lasts ~2.4 minutes.
+// 100 ms of real time is one game minute, so a full day lasts ~2.4 minutes
+// while the player is touching the screen. After IDLE_CLOCK_MS with no touch
+// the clock stops, so leaving the board on does not burn through days.
 // Watered crops advance one stage every GROW_INTERVAL_MS (mature at stage 3).
 static constexpr uint32_t MS_PER_GAME_MINUTE = 100;
 static constexpr uint32_t GROW_INTERVAL_MS   = 15000;
+static constexpr uint32_t IDLE_CLOCK_MS      = 15000;
 static constexpr uint32_t TOAST_MS           = 2000;
 static constexpr uint32_t TOUCH_DEBOUNCE_MS  = 180;
 static constexpr uint32_t FRAME_MS           = 66;  // ~15 fps cap

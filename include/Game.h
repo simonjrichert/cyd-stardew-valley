@@ -30,7 +30,7 @@ struct Cell {
     uint8_t ground;
     uint8_t crop;     // 0 = empty, 1 = parsnip
     uint8_t stage;    // 0 seed .. CROP_MATURE
-    uint8_t watered;  // cleared at midnight and on sleep
+    uint8_t watered;  // cleared when the farmer sleeps; required for growth
 };
 
 struct GameState {
@@ -56,7 +56,7 @@ struct GameState {
 };
 
 void gameInit(GameState& g);
-void gameUpdate(GameState& g, uint32_t dtMs);
+void gameUpdate(GameState& g, uint32_t dtMs, bool advanceClock);
 void gameTapTile(GameState& g, uint8_t tx, uint8_t ty);
 void gameFollow(GameState& g);
 void gameSelectTool(GameState& g, Tool tool);

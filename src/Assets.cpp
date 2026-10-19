@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <SPI.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -55,9 +56,13 @@ static AssetBoot failPack(File& file, AssetBoot why) {
 }
 
 AssetBoot assetsBegin() {
-    claimSdBus();
-    sdMounted = SD.begin(PIN_SD_CS, sdSpi, 4000000);
-    releaseSdBus();
+    sdMounted = false;
+    for (int attempt = 0; attempt < 4 && !sdMounted; ++attempt) {
+        if (attempt != 0) delay(100);
+        claimSdBus();
+        sdMounted = SD.begin(PIN_SD_CS, sdSpi, 4000000);
+        releaseSdBus();
+    }
     if (!sdMounted) {
         Serial.println("SD Card Mount Failed!");
         return ASSET_NO_CARD;
@@ -79,7 +84,10 @@ AssetBoot assetsBegin() {
     if (!readU16(file, &palCount) || !readU16(file, &artCount) || !readU16(file, &namedCount)) {
         return failPack(file, ASSET_BAD_PACK);
     }
-    if (palCount == 0 || palCount > 256 || artCount == 0 || artCount > 128 || namedCount != ASSET_NAMED_COUNT) {
+    // Tile ids are one byte, so 255 is the largest pack this lookup can use.
+    // The card pack has 143 tiles. A cap of 128 rejects it and used to skip the save.
+    if (palCount == 0 || palCount > 256 || artCount == 0 || artCount > 255 || namedCount != ASSET_NAMED_COUNT) {
+        Serial.printf("Bad atlas counts pal=%u art=%u named=%u\n", palCount, artCount, namedCount);
         return failPack(file, ASSET_BAD_PACK);
     }
 
@@ -136,17 +144,34 @@ bool assetsReadFile(const char* path, uint8_t* dst, size_t cap, size_t* outLen) 
 }
 
 bool assetsWriteFile(const char* path, const uint8_t* src, size_t len) {
-    if (!sdMounted || src == nullptr) return false;
+    if (!sdMounted || src == nullptr || path == nullptr) return false;
+    // Write a temp file first. The previous save stays in place until the
+    // new bytes are flushed, so pulling power mid-write cannot erase it.
+    char tmp[40];
+    char bak[40];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    snprintf(bak, sizeof(bak), "%s.bak", path);
+
     claimSdBus();
-    if (SD.exists(path)) SD.remove(path);
-    File file = SD.open(path, FILE_WRITE);
+    if (SD.exists(tmp)) SD.remove(tmp);
+    File file = SD.open(tmp, FILE_WRITE);
     if (!file) {
         releaseSdBus();
-        Serial.printf("Cannot write %s\n", path);
+        Serial.printf("Cannot write %s\n", tmp);
         return false;
     }
     size_t n = file.write(src, len);
+    file.flush();
     file.close();
+    if (n != len) {
+        SD.remove(tmp);
+        releaseSdBus();
+        return false;
+    }
+    if (SD.exists(bak)) SD.remove(bak);
+    if (SD.exists(path)) SD.rename(path, bak);
+    bool ok = SD.rename(tmp, path);
     releaseSdBus();
-    return n == len;
+    if (!ok) Serial.printf("Cannot replace %s\n", path);
+    return ok;
 }
