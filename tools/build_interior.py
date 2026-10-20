@@ -15,8 +15,9 @@ import import_pack as ip
 
 ROOT = ip.ROOT
 SHEET = Path(r"C:\Users\simon\Downloads\Pixel_16_interiors_v2_free\Pixel_16_interiors_v2_free\tiles and items.png")
-FARMHOUSE = Path(r"C:\Users\simon\Downloads\PC _ Computer - Stardew Valley - Tilesets - Farmhouse.png")
-FURNITURE = ROOT / "PC _ Computer - Stardew Valley - Tilesets - Furniture.png"
+STARDEW = ROOT / "assets" / "stardew"
+FARMHOUSE = STARDEW / "Tilesets" / "PC _ Computer - Stardew Valley - Tilesets - Farmhouse.png"
+FURNITURE = STARDEW / "Tilesets" / "PC _ Computer - Stardew Valley - Tilesets - Furniture.png"
 OUT_CPP = ROOT / "src" / "Interior.cpp"
 PREVIEW = ROOT / "tools" / "_house_preview.png"
 

@@ -170,14 +170,20 @@ static void useTool(GameState& g, Cell& cell) {
 }
 
 static void useBin(GameState& g) {
-    if (g.crops > 0) {
-        uint32_t earned = (uint32_t)g.crops * PRICE_CROP;
+    uint32_t earned = (uint32_t)g.crops * PRICE_CROP
+                    + (uint32_t)g.eggs * PRICE_EGG
+                    + (uint32_t)g.milk * PRICE_MILK
+                    + (uint32_t)g.wool * PRICE_WOOL;
+    if (earned > 0) {
         uint32_t sum = (uint32_t)g.gold + earned;
         if (sum > 65535u) sum = 65535u;
         char msg[40];
-        snprintf(msg, sizeof(msg), "Sold %u +%luG", (unsigned)g.crops, (unsigned long)earned);
+        snprintf(msg, sizeof(msg), "Sold +%luG", (unsigned long)earned);
         g.gold = (uint16_t)sum;
         g.crops = 0;
+        g.eggs = 0;
+        g.milk = 0;
+        g.wool = 0;
         setToast(g, msg);
         markSave(g);
         return;
@@ -220,6 +226,7 @@ static void sleepMorning(GameState& g) {
     g.minute = 0;
     g.minuteAccumMs = 0;
     g.day++;
+    g.petted = 0;
     setToast(g, "Rested until 06:00");
     markSave(g);
 }
@@ -451,8 +458,51 @@ static bool toolReady(const GameState& g, const Cell& cell) {
     }
 }
 
+static uint8_t petBitAt(uint8_t x, uint8_t y) {
+    if (x >= 8 && x <= 9 && y >= 3 && y <= 4) return 1;      // cow
+    if (x >= 8 && x <= 9 && y >= 6 && y <= 7) return 2;      // pig
+    if (x >= 10 && x <= 11 && y >= 4 && y <= 5) return 4;    // sheep
+    if (x == 0 && y == 8) return 8;                          // chicken
+    if (x == 19 && y == 4) return 16;                        // chicken
+    return 0;
+}
+
+static bool giveProduce(GameState& g, uint8_t& slot, const char* name) {
+    if (slot == 255) {
+        setToast(g, "Pack full");
+        return false;
+    }
+    slot++;
+    char msg[40];
+    snprintf(msg, sizeof(msg), "%s +1", name);
+    setToast(g, msg);
+    return true;
+}
+
+static bool petAnimal(GameState& g, uint8_t x, uint8_t y) {
+    uint8_t bit = petBitAt(x, y);
+    if (bit == 0) return false;
+    if (g.petted & bit) {
+        setToast(g, "Already petted");
+        return true;
+    }
+    if (bit == 1) {
+        if (!giveProduce(g, g.milk, "Milk")) return true;
+    } else if (bit == 2) {
+        setToast(g, "The pig oinks");
+    } else if (bit == 4) {
+        if (!giveProduce(g, g.wool, "Wool")) return true;
+    } else if (!giveProduce(g, g.eggs, "Egg")) {
+        return true;
+    }
+    g.petted = (uint8_t)(g.petted | bit);
+    markSave(g);
+    return true;
+}
+
 static bool interactable(const GameState& g, uint8_t tx, uint8_t ty) {
     if (g.place == PLACE_FARM && isFarmDoor(tx, ty)) return true;
+    if (g.place == PLACE_FARM && petBitAt(tx, ty) != 0) return true;
     uint8_t ground = groundAt(g, tx, ty);
     if (g.place == PLACE_HOUSE && ground == G_DOOR) return true;
     if (ground == G_BED || ground == G_BIN) return true;
@@ -475,6 +525,7 @@ static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
         return;
     }
     if (g.place == PLACE_HOUSE) return;
+    if (petAnimal(g, tx, ty)) return;
     Cell& cell = g.cells[ty][tx];
     if (cell.ground == G_BIN) {
         useBin(g);
@@ -597,9 +648,11 @@ bool gameSave(const GameState& g) {
     int n = snprintf(
         body, sizeof(body),
         "{\"v\":1,\"day\":%u,\"hour\":%u,\"minute\":%u,\"gold\":%u,\"seeds\":%u,\"crops\":%u,"
+        "\"eggs\":%u,\"milk\":%u,\"wool\":%u,\"pet\":%u,"
         "\"stamina\":%u,\"px\":%u,\"py\":%u,\"tool\":%u,\"in\":%u,\"cells\":\"%s\"}",
         (unsigned)g.day, g.hour, g.minute, (unsigned)g.gold, (unsigned)g.seeds,
-        (unsigned)g.crops, (unsigned)g.stamina, g.playerX, g.playerY, (unsigned)g.tool,
+        (unsigned)g.crops, (unsigned)g.eggs, (unsigned)g.milk, (unsigned)g.wool,
+        (unsigned)g.petted, (unsigned)g.stamina, g.playerX, g.playerY, (unsigned)g.tool,
         (unsigned)g.place, cells);
     if (n <= 0 || (size_t)n >= sizeof(body)) return false;
     return assetsWriteFile(SD_SAVE_PATH, (const uint8_t*)body, (size_t)n);
@@ -637,6 +690,10 @@ static bool gameLoadBody(GameState& g, char* body) {
     int gold = jsonInt(body, "gold", 0);
     int seeds = jsonInt(body, "seeds", 0);
     int crops = jsonInt(body, "crops", 0);
+    int eggs = jsonInt(body, "eggs", 0);
+    int milk = jsonInt(body, "milk", 0);
+    int wool = jsonInt(body, "wool", 0);
+    int petted = jsonInt(body, "pet", 0);
     int stamina = jsonInt(body, "stamina", STAMINA_MAX);
     int px = jsonInt(body, "px", g.playerX);
     int py = jsonInt(body, "py", g.playerY);
@@ -655,6 +712,10 @@ static bool gameLoadBody(GameState& g, char* body) {
     g.gold = (uint16_t)(gold < 0 ? 0 : gold > 65535 ? 65535 : gold);
     g.seeds = (uint8_t)(seeds < 0 ? 0 : seeds > 255 ? 255 : seeds);
     g.crops = (uint8_t)(crops < 0 ? 0 : crops > 255 ? 255 : crops);
+    g.eggs = (uint8_t)(eggs < 0 ? 0 : eggs > 255 ? 255 : eggs);
+    g.milk = (uint8_t)(milk < 0 ? 0 : milk > 255 ? 255 : milk);
+    g.wool = (uint8_t)(wool < 0 ? 0 : wool > 255 ? 255 : wool);
+    g.petted = (uint8_t)(petted < 0 ? 0 : petted > 255 ? 255 : petted);
     g.stamina = (uint8_t)(stamina < 0 ? 0 : stamina > STAMINA_MAX ? STAMINA_MAX : stamina);
     if (walkable(g, (uint8_t)px, (uint8_t)py)) {
         g.playerX = (uint8_t)px;

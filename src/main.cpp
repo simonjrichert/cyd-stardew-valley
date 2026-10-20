@@ -7,6 +7,7 @@
 #include "Config.h"
 #include "Game.h"
 #include "Interior.h"
+#include "Produce.h"
 #include "Sprites.h"
 
 #include <stdio.h>
@@ -224,6 +225,18 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
     }
 }
 
+static void blitIcon8(const View& v, int x, int y, const uint16_t* icon) {
+    for (int py = 0; py < 8; ++py) {
+        int sy = y + py;
+        if (sy < v.originY || sy >= v.originY + v.height) continue;
+        for (int px = 0; px < 8; ++px) {
+            uint16_t color = pgm_read_word(icon + (py * 2) * 16 + (px * 2));
+            if (color == 0) continue;
+            v.spr->drawPixel(x + px, sy - v.originY, swap565(color));
+        }
+    }
+}
+
 static void drawHud(const View& v) {
     const uint16_t gold = rgb565(236, 196, 56);
     const uint16_t cream = rgb565(248, 236, 210);
@@ -235,16 +248,28 @@ static void drawHud(const View& v) {
     textAt(v, 2, 4, cream, line);
 
     snprintf(line, sizeof(line), "%uG", (unsigned)game.gold);
-    textAt(v, 78, 4, gold, line);
+    textAt(v, 68, 4, gold, line);
 
     snprintf(line, sizeof(line), "S%u", (unsigned)game.seeds);
-    textAt(v, 132, 4, cream, line);
+    textAt(v, 108, 4, cream, line);
 
     snprintf(line, sizeof(line), "C%u", (unsigned)game.crops);
-    textAt(v, 168, 4, cream, line);
+    textAt(v, 136, 4, cream, line);
 
-    const int bx = 210;
-    const int bw = 106;
+    blitIcon8(v, 164, 4, ICON_EGG);
+    snprintf(line, sizeof(line), "%u", (unsigned)game.eggs);
+    textAt(v, 174, 4, cream, line);
+
+    blitIcon8(v, 192, 4, ICON_MILK);
+    snprintf(line, sizeof(line), "%u", (unsigned)game.milk);
+    textAt(v, 202, 4, cream, line);
+
+    blitIcon8(v, 220, 4, ICON_WOOL);
+    snprintf(line, sizeof(line), "%u", (unsigned)game.wool);
+    textAt(v, 230, 4, cream, line);
+
+    const int bx = 248;
+    const int bw = 70;
     fillScreenRect(v, bx, 4, bw, 8, rgb565(8, 8, 8));
     int inner = (bw - 2) * game.stamina / STAMINA_MAX;
     uint16_t staminaColor = rgb565(200, 56, 40);

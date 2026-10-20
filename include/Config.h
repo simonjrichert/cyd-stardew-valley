@@ -66,6 +66,9 @@ static constexpr uint8_t COST_PLANT   = 2;
 static constexpr uint8_t COST_HARVEST = 3;
 
 static constexpr uint16_t PRICE_CROP = 35;
+static constexpr uint16_t PRICE_EGG  = 25;
+static constexpr uint16_t PRICE_MILK = 40;
+static constexpr uint16_t PRICE_WOOL = 50;
 static constexpr uint16_t PRICE_SEED = 20;
 static constexpr uint8_t  SEEDS_START = 10;
 

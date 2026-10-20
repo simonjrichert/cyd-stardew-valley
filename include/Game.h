@@ -47,6 +47,10 @@ struct GameState {
     uint16_t gold;
     uint8_t seeds;
     uint8_t crops;
+    uint8_t eggs;
+    uint8_t milk;
+    uint8_t wool;
+    uint8_t petted;  // bitmask, cleared when the farmer sleeps
     uint8_t stamina;
     uint16_t day;
     uint8_t hour;
