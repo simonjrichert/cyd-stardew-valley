@@ -99,7 +99,7 @@ def main():
     for i, pos in enumerate(((0, 3), (8, 3), (10, 4), (15, 6), (19, 8))):
         stamp(pos[0], pos[1], flowers[i % len(flowers)], G_PATH)
     stamp(0, 5, rocks, G_FENCE)
-    stamp(7, 7, lamp, G_FENCE)
+    stamp(7, 7, lamp, G_PATH)
     # Chest sits beside the lane so the lane itself stays open.
     stamp(9, 8, ip.composite(chest, grass_tile), G_BIN)
 
@@ -111,7 +111,7 @@ def main():
     # Pasture fence. Gates at the door and between the two plots.
     for x in range(1, 19):
         piece = fence_post if x in (1, 18) else fence_h
-        if x not in (4, 5, 8, 9):
+        if x not in (4, 5, 8, 9, 10):
             stamp(x, 9, piece, G_FENCE)
         stamp(x, 12, piece, G_FENCE)
     for y in range(10, 12):
@@ -163,10 +163,13 @@ def main():
             indexed[ty + dy][tx + dx] = atlas.tiles[base + q]
             ground[ty + dy][tx + dx] = gnd
 
-    place_quad(8, 3, cow0, G_FENCE)
+    place_quad(8, 3, cow0, G_PATH)
     place_quad(8, 6, pig0, G_FENCE)
-    place_quad(10, 4, sheep0, G_FENCE)
-    place_quad(15, 7, slime0, G_FENCE)
+    # Feet stay drawn, but the row in front of the pig is a walk gap.
+    ground[7][8] = G_PATH
+    ground[7][9] = G_PATH
+    place_quad(10, 4, sheep0, G_PATH)
+    place_quad(15, 7, slime0, G_PATH)
     for pos in ((0, 8), (19, 4)):
         art_ids[pos[1]][pos[0]] = chick[0]
         indexed[pos[1]][pos[0]] = atlas.tiles[chick[0]]

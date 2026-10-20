@@ -15,9 +15,29 @@ static void setToast(GameState& g, const char* msg) {
 }
 
 static void markSave(GameState& g);
+static uint8_t groundAt(const GameState& g, uint8_t x, uint8_t y);
 
-static bool walkable(uint8_t ground) {
-    return ground == G_GRASS || ground == G_SOIL || ground == G_TILLED || ground == G_FLOOR || ground == G_PATH;
+static bool farmPassage(uint8_t x, uint8_t y) {
+    // 4-way pathfinding cannot squeeze diagonally, so these gaps have to be
+    // open or the lawn east of the house is sealed off.
+    if (x == 7 && y == 7) return true;                 // house corner / pig
+    if (y == 7 && (x == 8 || x == 9)) return true;     // pig / chest
+    if (x == 10 && y == 9) return true;                // chest / fence
+    // Cow and sheep sit on the straight line to the pond and oak. The slime
+    // sits on the south approach. Walk through them; do not path around.
+    if (x >= 8 && x <= 9 && y >= 3 && y <= 4) return true;    // cow
+    if (x >= 10 && x <= 11 && y >= 4 && y <= 5) return true;  // sheep
+    if (x >= 15 && x <= 16 && y >= 7 && y <= 8) return true;  // slime
+    return false;
+}
+
+static bool walkable(const GameState& g, uint8_t x, uint8_t y) {
+    uint8_t ground = groundAt(g, x, y);
+    if (ground == G_GRASS || ground == G_SOIL || ground == G_TILLED ||
+        ground == G_FLOOR || ground == G_PATH) {
+        return true;
+    }
+    return g.place == PLACE_FARM && farmPassage(x, y);
 }
 
 static bool isFarmDoor(uint8_t x, uint8_t y) {
@@ -208,7 +228,7 @@ static void useBed(GameState& g) {
     sleepMorning(g);
 }
 
-// Shortest walk around fences, water, and the house. One tile of that path
+// Shortest walk around fences and the house. One tile of that path
 // is taken per call. A blocked target stops on a neighboring tile instead.
 static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
     const int count = MAP_W * MAP_H;
@@ -217,7 +237,7 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
     static uint8_t qy[MAP_W * MAP_H];
     memset(parent, 0, sizeof(parent));
 
-    const bool standOn = walkable(groundAt(g, tx, ty));
+    const bool standOn = walkable(g, tx, ty);
     const int start = (int)g.playerY * MAP_W + (int)g.playerX;
     parent[start] = 0xFFFF;
     qx[0] = g.playerX;
@@ -266,7 +286,7 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
             if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
             const int ni = ny * MAP_W + nx;
             if (parent[ni] != 0) continue;
-            if (!walkable(groundAt(g, (uint8_t)nx, (uint8_t)ny))) continue;
+            if (!walkable(g, (uint8_t)nx, (uint8_t)ny)) continue;
             if (!standOn && nx == (int)tx && ny == (int)ty) continue;
             parent[ni] = (uint16_t)(here + 1);
             qx[qt] = (uint8_t)nx;
@@ -472,7 +492,7 @@ void gameTapTile(GameState& g, uint8_t tx, uint8_t ty) {
             actOnTile(g, tx, ty);
             return;
         }
-        if (g.place == PLACE_HOUSE && walkable(groundAt(g, tx, ty))) {
+        if (g.place == PLACE_HOUSE && walkable(g, tx, ty)) {
             g.playerX = tx;
             g.playerY = ty;
             g.hasDest = false;
@@ -507,7 +527,7 @@ void gameFollow(GameState& g) {
             actOnTile(g, g.destX, g.destY);
             return;
         }
-        if (!walkable(groundAt(g, g.destX, g.destY))) {
+        if (!walkable(g, g.destX, g.destY)) {
             g.hasDest = false;
             return;
         }
@@ -636,8 +656,7 @@ static bool gameLoadBody(GameState& g, char* body) {
     g.seeds = (uint8_t)(seeds < 0 ? 0 : seeds > 255 ? 255 : seeds);
     g.crops = (uint8_t)(crops < 0 ? 0 : crops > 255 ? 255 : crops);
     g.stamina = (uint8_t)(stamina < 0 ? 0 : stamina > STAMINA_MAX ? STAMINA_MAX : stamina);
-    uint8_t feet = g.place == PLACE_HOUSE ? houseGround((uint8_t)px, (uint8_t)py) : g.cells[py][px].ground;
-    if (walkable(feet)) {
+    if (walkable(g, (uint8_t)px, (uint8_t)py)) {
         g.playerX = (uint8_t)px;
         g.playerY = (uint8_t)py;
     } else if (g.place == PLACE_HOUSE) {

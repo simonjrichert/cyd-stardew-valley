@@ -150,8 +150,9 @@ static void blitTransparent(TFT_eSprite& dst, int x, int y, const uint8_t* sprit
 
 static void blitPlayer(TFT_eSprite& dst, int originY, uint8_t shadeNum) {
     // Walk cycle from the Cute Fantasy sheet. Each frame is 32x32, four
-    // tiles, with the feet sitting on the player's tile.
-    uint8_t base = gamePlayerFrameArt((uint8_t)((millis() / 160) % 4));
+    // tiles, with the feet sitting on the player's tile. Idle holds frame 0.
+    uint8_t frame = game.hasDest ? (uint8_t)((millis() / 160) % 4) : 0;
+    uint8_t base = gamePlayerFrameArt(frame);
     int ox = (int)game.playerX * TILE;
     int oy = (int)game.playerY * TILE - TILE - originY;
     for (int q = 0; q < 4; ++q) {
@@ -388,7 +389,7 @@ static bool readTouch(int& sx, int& sy) {
     uint16_t z1 = xptRead(0xB1);
     uint16_t z2 = xptRead(0xC1);
     int pressure = (int)z1 + 4095 - (int)z2;
-    bool pressed = pressure > 80 && pressure < 5000;
+    bool pressed = pressure > 200 && pressure < 5000;
     if (!pressed) {
         (void)xptRead(0x90);
         digitalWrite(PIN_TOUCH_CS, HIGH);
@@ -548,23 +549,30 @@ void loop() {
 
     static uint32_t lastPollMs = 0;
     static bool sampleReady = false;
+    static uint8_t hitStreak = 0;
     if ((now - lastPollMs) >= 12) {
         lastPollMs = now;
         int sx = 0;
         int sy = 0;
         if (readTouch(sx, sy)) {
-            seenHit = true;
-            sampleReady = true;
-            lastHitMs = now;
-            if (fingerDown &&
-                (sx > holdX ? sx - holdX : holdX - sx) <= 12 &&
-                (sy > holdY ? sy - holdY : holdY - sy) <= 12) {
-                sx = holdX;
-                sy = holdY;
-            } else {
-                holdX = sx;
-                holdY = sy;
+            if (hitStreak < 255) hitStreak++;
+            // One noisy XPT2046 sample is not a press. Two in a row is.
+            if (hitStreak >= 2) {
+                seenHit = true;
+                sampleReady = true;
+                lastHitMs = now;
+                if (fingerDown &&
+                    (sx > holdX ? sx - holdX : holdX - sx) <= 12 &&
+                    (sy > holdY ? sy - holdY : holdY - sy) <= 12) {
+                    sx = holdX;
+                    sy = holdY;
+                } else {
+                    holdX = sx;
+                    holdY = sy;
+                }
             }
+        } else {
+            hitStreak = 0;
         }
     }
 
