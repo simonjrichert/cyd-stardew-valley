@@ -15,7 +15,8 @@ enum Ground : uint8_t {
     G_BIN,
     G_BED,
     G_PATH,
-    G_DOOR
+    G_DOOR,
+    G_FORAGE
 };
 
 enum Place : uint8_t {
@@ -50,6 +51,8 @@ struct GameState {
     uint8_t eggs;
     uint8_t milk;
     uint8_t wool;
+    uint8_t apples;
+    uint8_t forage;
     uint8_t petted;  // bitmask, cleared when the farmer sleeps
     uint8_t stamina;
     uint16_t day;

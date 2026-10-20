@@ -9,6 +9,7 @@
 #include "Interior.h"
 #include "Produce.h"
 #include "Sprites.h"
+#include "Tilemap.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -103,6 +104,13 @@ static const uint8_t* namedTile(uint8_t slot, const uint8_t* flashTile) {
 }
 
 static const uint8_t* tileFor(const Cell& cell, int tx, int ty) {
+    uint8_t mapGround = pgm_read_byte(&MAP_GROUND[ty][tx]);
+    if (cell.ground == G_FORAGE) {
+        return sceneryTile(gameArtAt((uint8_t)tx, (uint8_t)ty));
+    }
+    if (mapGround == G_FORAGE && cell.ground == G_GRASS) {
+        return sceneryTile(TILE_GRASS_ART);
+    }
     if (cell.crop) {
         const uint8_t* crops[] = {
             namedTile(ASSET_CROP0, TILE_CROP0),
@@ -248,28 +256,36 @@ static void drawHud(const View& v) {
     textAt(v, 2, 4, cream, line);
 
     snprintf(line, sizeof(line), "%uG", (unsigned)game.gold);
-    textAt(v, 68, 4, gold, line);
+    textAt(v, 62, 4, gold, line);
 
     snprintf(line, sizeof(line), "S%u", (unsigned)game.seeds);
-    textAt(v, 108, 4, cream, line);
+    textAt(v, 92, 4, cream, line);
 
     snprintf(line, sizeof(line), "C%u", (unsigned)game.crops);
-    textAt(v, 136, 4, cream, line);
+    textAt(v, 118, 4, cream, line);
 
-    blitIcon8(v, 164, 4, ICON_EGG);
+    blitIcon8(v, 142, 4, ICON_EGG);
     snprintf(line, sizeof(line), "%u", (unsigned)game.eggs);
-    textAt(v, 174, 4, cream, line);
+    textAt(v, 151, 4, cream, line);
 
-    blitIcon8(v, 192, 4, ICON_MILK);
+    blitIcon8(v, 164, 4, ICON_MILK);
     snprintf(line, sizeof(line), "%u", (unsigned)game.milk);
-    textAt(v, 202, 4, cream, line);
+    textAt(v, 173, 4, cream, line);
 
-    blitIcon8(v, 220, 4, ICON_WOOL);
+    blitIcon8(v, 186, 4, ICON_WOOL);
     snprintf(line, sizeof(line), "%u", (unsigned)game.wool);
-    textAt(v, 230, 4, cream, line);
+    textAt(v, 195, 4, cream, line);
 
-    const int bx = 248;
-    const int bw = 70;
+    blitIcon8(v, 208, 4, ICON_APPLE);
+    snprintf(line, sizeof(line), "%u", (unsigned)game.apples);
+    textAt(v, 217, 4, cream, line);
+
+    blitIcon8(v, 230, 4, ICON_FORAGE);
+    snprintf(line, sizeof(line), "%u", (unsigned)game.forage);
+    textAt(v, 239, 4, cream, line);
+
+    const int bx = 252;
+    const int bw = 66;
     fillScreenRect(v, bx, 4, bw, 8, rgb565(8, 8, 8));
     int inner = (bw - 2) * game.stamina / STAMINA_MAX;
     uint16_t staminaColor = rgb565(200, 56, 40);
@@ -540,6 +556,8 @@ void setup() {
     // Sprite bytes from the card are a smaller malloc after that.
     const char* sdNote = nullptr;
     AssetBoot boot = assetsBegin();
+    assetsUseFirmwareIfStale(
+        (uint16_t)(sizeof(PALETTE) / sizeof(PALETTE[0])), ART_COUNT);
     // The save is independent of the sprite pack. A rejected atlas used to
     // skip gameLoad and send the farm back to day 1.
     bool loaded = boot != ASSET_NO_CARD && gameLoad(game);

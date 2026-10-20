@@ -12,6 +12,8 @@ CUTE = Path(r"C:\Users\simon\Downloads\Cute_Fantasy_Free\Cute_Fantasy_Free")
 G_GRASS, G_SOIL, G_TILLED, G_FENCE, G_FLOOR, G_BIN, G_BED, G_PATH, G_WATER = (
     ip.G_GRASS, ip.G_SOIL, ip.G_TILLED, ip.G_FENCE, ip.G_FLOOR, ip.G_BIN, ip.G_BED, ip.G_PATH, ip.G_WATER,
 )
+G_FORAGE = 10
+ENV = ROOT / "assets" / "stardew" / "Environment"
 
 
 def main():
@@ -54,7 +56,11 @@ def main():
         return ip.composite(sprouts[stage], soils[stage % len(soils)])
 
     atlas = ip.Atlas()
-    art = [[grass_tile for _ in range(20)] for _ in range(15)]
+
+    def copy_tile(tile):
+        return [list(row) for row in tile]
+
+    art = [[copy_tile(grass_tile) for _ in range(20)] for _ in range(15)]
     ground = [[G_GRASS for _ in range(20)] for _ in range(15)]
     crop = [[0 for _ in range(20)] for _ in range(15)]
 
@@ -127,6 +133,90 @@ def main():
     stamp(16, 10, soils[0], G_SOIL)
     stamp(16, 11, soils[1], G_SOIL)
 
+    grass_sheet = ip.load_png(ENV / "PC _ Computer - Stardew Valley - Environment - Grass.png")
+    fruit_sheet = ip.load_png(ENV / "PC _ Computer - Stardew Valley - Environment - Fruit Trees.png")
+    bush_sheet = ip.load_png(ENV / "PC _ Computer - Stardew Valley - Environment - Bushes.png")
+    forage_sheet = ip.load_png(ENV / "PC _ Computer - Stardew Valley - Environment - Forage.png")
+
+    def mutable_tile(tx, ty):
+        return art[ty][tx]
+
+    def blit_sheet(sheet, sx0, sy0, sw, sh, dx, dy, gnd=None, crop_v=0, cover=40):
+        _, _, bpp, rows = sheet
+        hit = {}
+        for y in range(sh):
+            for x in range(sw):
+                X, Y = dx + x, dy + y
+                if X < 0 or Y < 0 or X >= 320 or Y >= 240:
+                    continue
+                r, g, b, a = ip.pix(rows, bpp, sx0 + x, sy0 + y)
+                if a < 24 or (r > 248 and g > 248 and b > 248) or (r + g + b < 24):
+                    continue
+                tx, ty = X // 16, Y // 16
+                if tx < 0 or tx >= 20 or ty < 0 or ty >= 13:
+                    continue
+                if ground[ty][tx] != G_GRASS and ground[ty][tx] != G_FORAGE:
+                    continue
+                tile = mutable_tile(tx, ty)
+                px, py = X % 16, Y % 16
+                if a >= 240:
+                    tile[py][px] = (r, g, b, 255)
+                else:
+                    br, bgc, bb, _ba = tile[py][px]
+                    u = a / 255
+                    tile[py][px] = (
+                        int(r * u + br * (1 - u)),
+                        int(g * u + bgc * (1 - u)),
+                        int(b * u + bb * (1 - u)),
+                        255,
+                    )
+                if a >= 200:
+                    hit[(tx, ty)] = hit.get((tx, ty), 0) + 1
+        if gnd is None:
+            return
+        for (tx, ty), n in hit.items():
+            if n < cover:
+                continue
+            if ground[ty][tx] not in (G_GRASS, G_FORAGE):
+                continue
+            ground[ty][tx] = gnd
+            if gnd == G_FORAGE and crop_v:
+                crop[ty][tx] = crop_v
+            elif gnd == G_FENCE:
+                crop[ty][tx] = 0
+
+    misc_sheet = ip.load_png(
+        ROOT / "assets" / "stardew" / "Miscellaneous" / (
+            "PC _ Computer - Stardew Valley - Miscellaneous - Harvested Crops, "
+            "Seed Packets, Minerals, Food, Equipment, & Miscellaneous Objects.png"
+        )
+    )
+
+    # Grass tufts first so bushes and the tree sit on top. Stay walkable.
+    for tx, ty, gx in (
+        (7, 0, 0), (8, 1, 15), (9, 2, 31), (9, 0, 0),
+        (0, 1, 31), (0, 6, 15), (0, 7, 0),
+        (11, 6, 31), (11, 8, 15), (15, 2, 0), (15, 5, 15),
+        (16, 8, 0), (19, 6, 15), (19, 7, 31),
+    ):
+        x0, y0 = gx, 2 if gx else 0
+        w0, h0 = 14, 18
+        blit_sheet(grass_sheet, x0, y0, w0, h0, tx * 16 + (16 - w0) // 2, ty * 16 + 16 - h0)
+
+    # Spring forage you can pick up. Walkable; corridors stay open.
+    blit_sheet(forage_sheet, 7, 6, 16, 16, 7 * 16, 1 * 16, G_FORAGE, crop_v=2, cover=8)
+    blit_sheet(forage_sheet, 62, 6, 16, 16, 0 * 16, 4 * 16, G_FORAGE, crop_v=3, cover=8)
+    blit_sheet(forage_sheet, 34, 6, 15, 16, 17 * 16, 8 * 16, G_FORAGE, crop_v=4, cover=8)
+
+    # Two modest bushes — walk around them, not through.
+    blit_sheet(bush_sheet, 1, 10, 30, 35, 17 * 16 + 1, 5 * 16 + 10, G_FENCE, cover=28)
+    blit_sheet(bush_sheet, 1, 132, 32, 32, 10 * 16, 1 * 16 + 2, G_FENCE, cover=28)
+
+    # Apple tree, 3x5 tiles, north of the pond. Trunk is blocked; fruit is tappable.
+    blit_sheet(fruit_sheet, 192, 400, 48, 80, 12 * 16, 0, G_FENCE, cover=24)
+    # Fallen apple beside the trunk.
+    blit_sheet(misc_sheet, 208, 400, 16, 16, 15 * 16, 4 * 16, G_FORAGE, crop_v=1, cover=8)
+
     # 32x32 animals, two frames each, quadrants TL TR BL BR.
     def add_quad(img, fx, fy, onto_grass=True):
         ids = []
@@ -190,8 +280,12 @@ def main():
     # Player named tile is the top-left of frame 0, clear pixels included.
     named_grids[-1] = atlas.tiles[player_bases[0]]
 
+    grass_art_id = atlas.add(grass_tile)
+    if len(atlas.tiles) > 255:
+        raise SystemExit(f"too many unique tiles: {len(atlas.tiles)}")
+
     start_x, start_y = 4, 8
-    if ground[start_y][start_x] not in (G_GRASS, G_PATH, G_FLOOR, G_SOIL, G_TILLED):
+    if ground[start_y][start_x] not in (G_GRASS, G_PATH, G_FLOOR, G_SOIL, G_TILLED, G_FORAGE):
         # The lane may have been covered. Fall back to the tile in front of the gate.
         start_x, start_y = 4, 8
         ground[start_y][start_x] = G_PATH
@@ -202,7 +296,7 @@ def main():
     preview = [[indexed[y][x] for x in range(20)] for y in range(15)]
     for y in range(15):
         for x in range(20):
-            if crop[y][x]:
+            if crop[y][x] and ground[y][x] in (G_TILLED, G_SOIL):
                 preview[y][x] = named_grids[1 + crop[y][x]]
     quads = [atlas.tiles[player_bases[0] + q] for q in range(4)]
     for q in range(4):
@@ -250,6 +344,7 @@ def main():
     header = ["#pragma once\n\n#include <Arduino.h>\n\n#include \"Config.h\"\n\n"]
     header.append(f"static constexpr uint8_t PLAYER_START_X = {start_x};\n")
     header.append(f"static constexpr uint8_t PLAYER_START_Y = {start_y};\n")
+    header.append(f"static constexpr uint8_t TILE_GRASS_ART = {grass_art_id};\n")
     header.append("// Each walk frame is four tiles: top-left, top-right, bottom-left, bottom-right.\n")
     header.append("static constexpr uint8_t PLAYER_ANIM[4] = {" + ", ".join(str(i) for i in player_bases) + "};\n")
     header.append("static constexpr uint8_t CHICKEN_ANIM[4] = {" + ", ".join(str(i) for i in chick) + "};\n")

@@ -1,4 +1,4 @@
-"""Emit 16x16 RGB565 icons for egg, milk, and wool from the Stardew objects sheet."""
+"""Emit 16x16 RGB565 icons for egg, milk, wool, apple, and forage."""
 
 import sys
 from pathlib import Path
@@ -19,11 +19,17 @@ SHEET = (
 )
 OUT = ROOT / "include" / "Produce.h"
 
-# 16x16 cells on the wiki objects montage.
+FORAGE_SHEET = (
+    ROOT / "assets" / "stardew" / "Environment" / "PC _ Computer - Stardew Valley - Environment - Forage.png"
+)
+
+# 16x16 cells. Apple is objects index 613; forage uses wild horseradish.
 ICON_BOXES = {
-    "EGG": (128, 112),   # egg
-    "MILK": (272, 112),  # milk jug beside the pails
-    "WOOL": (128, 288),  # wool
+    "EGG": (SHEET, 128, 112),
+    "MILK": (SHEET, 272, 112),
+    "WOOL": (SHEET, 128, 288),
+    "APPLE": (SHEET, 208, 400),
+    "FORAGE": (FORAGE_SHEET, 7, 6),
 }
 
 
@@ -32,23 +38,27 @@ def rgb565(r, g, b):
 
 
 def main():
-    w, h, bpp, rows = ip.load_png(SHEET)
+    cache = {}
     lines = [
         "#pragma once",
         "",
         "#include <Arduino.h>",
         "#include <stdint.h>",
         "",
-        "// 16x16 RGB565 icons from the Stardew miscellaneous objects sheet.",
+        "// 16x16 RGB565 icons from the Stardew miscellaneous / forage sheets.",
         "// 0x0000 is transparent.",
         "",
     ]
-    for name, (x0, y0) in ICON_BOXES.items():
+    for name, (path, x0, y0) in ICON_BOXES.items():
+        if path not in cache:
+            cache[path] = ip.load_png(path)
+        w, h, bpp, rows = cache[path]
         vals = []
         for y in range(16):
             for x in range(16):
                 r, g, b, a = ip.pix(rows, bpp, x0 + x, y0 + y)
-                vals.append("0x0000" if a < 40 else f"0x{rgb565(r, g, b):04X}")
+                skip = a < 40 or (r > 248 and g > 248 and b > 248) or (r + g + b < 24)
+                vals.append("0x0000" if skip else f"0x{rgb565(r, g, b):04X}")
         lines.append(f"static const uint16_t ICON_{name}[256] PROGMEM = {{")
         lines.append("    " + ", ".join(vals) + ",")
         lines.append("};")

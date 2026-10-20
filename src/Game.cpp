@@ -34,7 +34,7 @@ static bool farmPassage(uint8_t x, uint8_t y) {
 static bool walkable(const GameState& g, uint8_t x, uint8_t y) {
     uint8_t ground = groundAt(g, x, y);
     if (ground == G_GRASS || ground == G_SOIL || ground == G_TILLED ||
-        ground == G_FLOOR || ground == G_PATH) {
+        ground == G_FLOOR || ground == G_PATH || ground == G_FORAGE) {
         return true;
     }
     return g.place == PLACE_FARM && farmPassage(x, y);
@@ -42,6 +42,10 @@ static bool walkable(const GameState& g, uint8_t x, uint8_t y) {
 
 static bool isFarmDoor(uint8_t x, uint8_t y) {
     return y == FARM_DOOR_Y && x >= FARM_DOOR_X0 && x <= FARM_DOOR_X1;
+}
+
+static bool isFruitTree(uint8_t x, uint8_t y) {
+    return x >= 12 && x <= 14 && y <= 4;
 }
 
 static uint8_t groundAt(const GameState& g, uint8_t x, uint8_t y) {
@@ -173,7 +177,9 @@ static void useBin(GameState& g) {
     uint32_t earned = (uint32_t)g.crops * PRICE_CROP
                     + (uint32_t)g.eggs * PRICE_EGG
                     + (uint32_t)g.milk * PRICE_MILK
-                    + (uint32_t)g.wool * PRICE_WOOL;
+                    + (uint32_t)g.wool * PRICE_WOOL
+                    + (uint32_t)g.apples * PRICE_APPLE
+                    + (uint32_t)g.forage * PRICE_FORAGE;
     if (earned > 0) {
         uint32_t sum = (uint32_t)g.gold + earned;
         if (sum > 65535u) sum = 65535u;
@@ -184,6 +190,8 @@ static void useBin(GameState& g) {
         g.eggs = 0;
         g.milk = 0;
         g.wool = 0;
+        g.apples = 0;
+        g.forage = 0;
         setToast(g, msg);
         markSave(g);
         return;
@@ -207,6 +215,7 @@ static bool growWatered(GameState& g) {
     for (int y = 0; y < MAP_H; ++y) {
         for (int x = 0; x < MAP_W; ++x) {
             Cell& cell = g.cells[y][x];
+            if (cell.ground == G_FORAGE) continue;
             if (cell.crop && cell.watered && cell.stage < CROP_MATURE) {
                 cell.stage++;
                 grew = true;
@@ -227,6 +236,17 @@ static void sleepMorning(GameState& g) {
     g.minuteAccumMs = 0;
     g.day++;
     g.petted = 0;
+    for (int y = 0; y < MAP_H; ++y) {
+        for (int x = 0; x < MAP_W; ++x) {
+            uint8_t mapG = pgm_read_byte(&MAP_GROUND[y][x]);
+            if (mapG != G_FORAGE) continue;
+            if (g.cells[y][x].ground != G_GRASS) continue;
+            g.cells[y][x].ground = G_FORAGE;
+            g.cells[y][x].crop = pgm_read_byte(&MAP_CROP[y][x]);
+            g.cells[y][x].stage = 0;
+            g.cells[y][x].watered = 0;
+        }
+    }
     setToast(g, "Rested until 06:00");
     markSave(g);
 }
@@ -271,7 +291,7 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
                     found = here;
                     break;
                 }
-                if (cheb <= 2 && groundAt(g, tx, ty) == G_BED) {
+                if (cheb <= 2 && (groundAt(g, tx, ty) == G_BED || isFruitTree(tx, ty))) {
                     found = here;
                     break;
                 }
@@ -357,7 +377,9 @@ void gameInit(GameState& g) {
         for (int x = 0; x < MAP_W; ++x) {
             g.cells[y][x].ground = pgm_read_byte(&MAP_GROUND[y][x]);
             uint8_t planted = pgm_read_byte(&MAP_CROP[y][x]);
-            if (planted != 0) {
+            if (g.cells[y][x].ground == G_FORAGE) {
+                g.cells[y][x].crop = planted;
+            } else if (planted != 0) {
                 g.cells[y][x].crop = 1;
                 g.cells[y][x].stage = (uint8_t)(planted - 1);
                 g.cells[y][x].watered = 1;
@@ -440,7 +462,8 @@ static int tileDist(const GameState& g, uint8_t tx, uint8_t ty) {
 static bool closeEnoughToAct(const GameState& g, uint8_t tx, uint8_t ty) {
     int dist = tileDist(g, tx, ty);
     if (dist <= 1) return true;
-    return g.place == PLACE_HOUSE && groundAt(g, tx, ty) == G_BED && dist <= 2;
+    if (g.place == PLACE_HOUSE && groundAt(g, tx, ty) == G_BED && dist <= 2) return true;
+    return g.place == PLACE_FARM && isFruitTree(tx, ty) && dist <= 2;
 }
 
 static bool toolReady(const GameState& g, const Cell& cell) {
@@ -464,6 +487,7 @@ static uint8_t petBitAt(uint8_t x, uint8_t y) {
     if (x >= 10 && x <= 11 && y >= 4 && y <= 5) return 4;    // sheep
     if (x == 0 && y == 8) return 8;                          // chicken
     if (x == 19 && y == 4) return 16;                        // chicken
+    if (isFruitTree(x, y)) return 32;                        // apple tree
     return 0;
 }
 
@@ -483,7 +507,7 @@ static bool petAnimal(GameState& g, uint8_t x, uint8_t y) {
     uint8_t bit = petBitAt(x, y);
     if (bit == 0) return false;
     if (g.petted & bit) {
-        setToast(g, "Already petted");
+        setToast(g, bit == 32 ? "Picked today" : "Already petted");
         return true;
     }
     if (bit == 1) {
@@ -492,6 +516,8 @@ static bool petAnimal(GameState& g, uint8_t x, uint8_t y) {
         setToast(g, "The pig oinks");
     } else if (bit == 4) {
         if (!giveProduce(g, g.wool, "Wool")) return true;
+    } else if (bit == 32) {
+        if (!giveProduce(g, g.apples, "Apple")) return true;
     } else if (!giveProduce(g, g.eggs, "Egg")) {
         return true;
     }
@@ -504,6 +530,7 @@ static bool interactable(const GameState& g, uint8_t tx, uint8_t ty) {
     if (g.place == PLACE_FARM && isFarmDoor(tx, ty)) return true;
     if (g.place == PLACE_FARM && petBitAt(tx, ty) != 0) return true;
     uint8_t ground = groundAt(g, tx, ty);
+    if (g.place == PLACE_FARM && ground == G_FORAGE) return true;
     if (g.place == PLACE_HOUSE && ground == G_DOOR) return true;
     if (ground == G_BED || ground == G_BIN) return true;
     return g.place == PLACE_FARM && toolReady(g, g.cells[ty][tx]);
@@ -527,6 +554,20 @@ static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
     if (g.place == PLACE_HOUSE) return;
     if (petAnimal(g, tx, ty)) return;
     Cell& cell = g.cells[ty][tx];
+    if (cell.ground == G_FORAGE) {
+        uint8_t kind = cell.crop;
+        bool ok = false;
+        if (kind == 1) ok = giveProduce(g, g.apples, "Apple");
+        else if (kind == 3) ok = giveProduce(g, g.forage, "Leek");
+        else if (kind == 4) ok = giveProduce(g, g.forage, "Onion");
+        else ok = giveProduce(g, g.forage, "Horseradish");
+        if (ok) {
+            cell.ground = G_GRASS;
+            cell.crop = 0;
+            markSave(g);
+        }
+        return;
+    }
     if (cell.ground == G_BIN) {
         useBin(g);
         return;
@@ -648,12 +689,12 @@ bool gameSave(const GameState& g) {
     int n = snprintf(
         body, sizeof(body),
         "{\"v\":1,\"day\":%u,\"hour\":%u,\"minute\":%u,\"gold\":%u,\"seeds\":%u,\"crops\":%u,"
-        "\"eggs\":%u,\"milk\":%u,\"wool\":%u,\"pet\":%u,"
+        "\"eggs\":%u,\"milk\":%u,\"wool\":%u,\"apples\":%u,\"forage\":%u,\"pet\":%u,"
         "\"stamina\":%u,\"px\":%u,\"py\":%u,\"tool\":%u,\"in\":%u,\"cells\":\"%s\"}",
         (unsigned)g.day, g.hour, g.minute, (unsigned)g.gold, (unsigned)g.seeds,
         (unsigned)g.crops, (unsigned)g.eggs, (unsigned)g.milk, (unsigned)g.wool,
-        (unsigned)g.petted, (unsigned)g.stamina, g.playerX, g.playerY, (unsigned)g.tool,
-        (unsigned)g.place, cells);
+        (unsigned)g.apples, (unsigned)g.forage, (unsigned)g.petted, (unsigned)g.stamina,
+        g.playerX, g.playerY, (unsigned)g.tool, (unsigned)g.place, cells);
     if (n <= 0 || (size_t)n >= sizeof(body)) return false;
     return assetsWriteFile(SD_SAVE_PATH, (const uint8_t*)body, (size_t)n);
 }
@@ -693,6 +734,8 @@ static bool gameLoadBody(GameState& g, char* body) {
     int eggs = jsonInt(body, "eggs", 0);
     int milk = jsonInt(body, "milk", 0);
     int wool = jsonInt(body, "wool", 0);
+    int apples = jsonInt(body, "apples", 0);
+    int forage = jsonInt(body, "forage", 0);
     int petted = jsonInt(body, "pet", 0);
     int stamina = jsonInt(body, "stamina", STAMINA_MAX);
     int px = jsonInt(body, "px", g.playerX);
@@ -715,7 +758,21 @@ static bool gameLoadBody(GameState& g, char* body) {
     g.eggs = (uint8_t)(eggs < 0 ? 0 : eggs > 255 ? 255 : eggs);
     g.milk = (uint8_t)(milk < 0 ? 0 : milk > 255 ? 255 : milk);
     g.wool = (uint8_t)(wool < 0 ? 0 : wool > 255 ? 255 : wool);
+    g.apples = (uint8_t)(apples < 0 ? 0 : apples > 255 ? 255 : apples);
+    g.forage = (uint8_t)(forage < 0 ? 0 : forage > 255 ? 255 : forage);
     g.petted = (uint8_t)(petted < 0 ? 0 : petted > 255 ? 255 : petted);
+    for (int y = 0; y < MAP_H; ++y) {
+        for (int x = 0; x < MAP_W; ++x) {
+            if (g.cells[y][x].ground != G_GRASS || g.cells[y][x].crop != 0) continue;
+            uint8_t mapG = pgm_read_byte(&MAP_GROUND[y][x]);
+            if (mapG == G_FORAGE) {
+                g.cells[y][x].ground = G_FORAGE;
+                g.cells[y][x].crop = pgm_read_byte(&MAP_CROP[y][x]);
+            } else if (mapG == G_FENCE || mapG == G_WATER) {
+                g.cells[y][x].ground = mapG;
+            }
+        }
+    }
     g.stamina = (uint8_t)(stamina < 0 ? 0 : stamina > STAMINA_MAX ? STAMINA_MAX : stamina);
     if (walkable(g, (uint8_t)px, (uint8_t)py)) {
         g.playerX = (uint8_t)px;

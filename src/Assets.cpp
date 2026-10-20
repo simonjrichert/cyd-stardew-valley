@@ -113,6 +113,22 @@ bool assetsReady() {
     return packReady;
 }
 
+void assetsUseFirmwareIfStale(uint16_t expectPal, uint16_t expectArt) {
+    if (!packReady) return;
+    if (palCount == expectPal && artCount == expectArt) return;
+    Serial.printf("Atlas mismatch pal %u/%u art %u/%u, using flash\n",
+                  palCount, expectPal, artCount, expectArt);
+    packReady = false;
+    free(pack);
+    pack = nullptr;
+    palette = nullptr;
+    artBase = nullptr;
+    namedBase = nullptr;
+    palCount = 0;
+    artCount = 0;
+    namedCount = 0;
+}
+
 const uint8_t* assetArt(uint8_t id) {
     if (!packReady || id >= artCount) return nullptr;
     return artBase + (size_t)id * 256u;

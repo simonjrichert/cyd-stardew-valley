@@ -32,6 +32,9 @@ enum AssetBoot : uint8_t {
 AssetBoot assetsBegin();
 
 bool assetsReady();
+// Drop a card pack whose palette/tile counts do not match this firmware.
+// The farm then draws from flash instead of mixing two atlases.
+void assetsUseFirmwareIfStale(uint16_t expectPal, uint16_t expectArt);
 const uint8_t* assetArt(uint8_t id);
 const uint8_t* assetNamed(uint8_t slot);
 uint16_t assetPalette(uint8_t index);
