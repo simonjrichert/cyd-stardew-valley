@@ -6,6 +6,7 @@
 #include "Assets.h"
 #include "Config.h"
 #include "Game.h"
+#include "Interior.h"
 #include "Sprites.h"
 
 #include <stdio.h>
@@ -189,6 +190,14 @@ static void textAt(const View& v, int x, int y, uint16_t color, const char* text
     v.spr->print(text);
 }
 
+static void blitHouse(TFT_eSprite& dst, int x, int y, const uint16_t* tile, uint8_t shadeNum) {
+    uint16_t buf[256];
+    for (int i = 0; i < TILE_BYTES; ++i) {
+        buf[i] = swap565(shade565(pgm_read_word(tile + i), shadeNum));
+    }
+    dst.pushImage(x, y, TILE, TILE, buf);
+}
+
 static void drawWorld(const View& v, uint8_t shadeNum) {
     int y0 = v.originY / TILE;
     int y1 = (v.originY + v.height - 1) / TILE;
@@ -198,6 +207,10 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
     for (int ty = y0; ty <= y1; ++ty) {
         int sy = ty * TILE - v.originY;
         for (int tx = 0; tx < MAP_W; ++tx) {
+            if (game.place == PLACE_HOUSE) {
+                blitHouse(*v.spr, tx * TILE, sy, houseTile((uint8_t)tx, (uint8_t)ty), shadeNum);
+                continue;
+            }
             const Cell& cell = game.cells[ty][tx];
             blitOpaque(*v.spr, tx * TILE, sy, tileFor(cell, tx, ty), shadeNum, cell.crop && cell.watered);
         }
@@ -413,8 +426,15 @@ static bool readTouch(int& sx, int& sy) {
     return true;
 }
 
+static bool touchOnHotbar(int sy) {
+    // Farm hotbar has 8 px of slop into row 12. In the house that band is the
+    // south wall and the door, so only the real hotbar rows count there.
+    if (game.place == PLACE_HOUSE) return sy >= HOTBAR_Y;
+    return sy >= HOTBAR_HIT_Y;
+}
+
 static void dispatchTouch(int sx, int sy, bool freshPress) {
-    if (sy >= HOTBAR_HIT_Y) {
+    if (touchOnHotbar(sy)) {
         int slot = sx / (SCREEN_W / TOOL_COUNT);
         if (slot < 0) slot = 0;
         if (slot >= TOOL_COUNT) slot = TOOL_COUNT - 1;
@@ -563,7 +583,7 @@ void loop() {
     } else if (down && sampleReady && now >= nextStepMs) {
         sampleReady = false;
         nextStepMs = now + TOUCH_DEBOUNCE_MS;
-        if (holdY >= HOTBAR_HIT_Y) {
+        if (touchOnHotbar(holdY)) {
             dispatchTouch(holdX, holdY, false);
         } else if (holdY >= HUD_H) {
             int tx = holdX / TILE;

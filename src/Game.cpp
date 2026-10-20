@@ -1,6 +1,7 @@
 #include "Game.h"
 
 #include "Assets.h"
+#include "Interior.h"
 #include "Tilemap.h"
 
 #include <stdio.h>
@@ -13,8 +14,39 @@ static void setToast(GameState& g, const char* msg) {
     g.toastUntilMs = millis() + TOAST_MS;
 }
 
+static void markSave(GameState& g);
+
 static bool walkable(uint8_t ground) {
     return ground == G_GRASS || ground == G_SOIL || ground == G_TILLED || ground == G_FLOOR || ground == G_PATH;
+}
+
+static bool isFarmDoor(uint8_t x, uint8_t y) {
+    return y == FARM_DOOR_Y && x >= FARM_DOOR_X0 && x <= FARM_DOOR_X1;
+}
+
+static uint8_t groundAt(const GameState& g, uint8_t x, uint8_t y) {
+    if (g.place == PLACE_HOUSE) return houseGround(x, y);
+    return g.cells[y][x].ground;
+}
+
+static void enterHouse(GameState& g) {
+    g.place = PLACE_HOUSE;
+    g.playerX = HOUSE_SPAWN_X;
+    g.playerY = HOUSE_SPAWN_Y;
+    g.hasDest = false;
+    setToast(g, "Inside");
+    if (gameSave(g)) g.saveDirty = false;
+    else markSave(g);
+}
+
+static void exitHouse(GameState& g) {
+    g.place = PLACE_FARM;
+    g.playerX = FARM_EXIT_X;
+    g.playerY = FARM_EXIT_Y;
+    g.hasDest = false;
+    setToast(g, "Outside");
+    if (gameSave(g)) g.saveDirty = false;
+    else markSave(g);
 }
 
 static void markSave(GameState& g) {
@@ -185,7 +217,7 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
     static uint8_t qy[MAP_W * MAP_H];
     memset(parent, 0, sizeof(parent));
 
-    const bool standOn = walkable(g.cells[ty][tx].ground);
+    const bool standOn = walkable(groundAt(g, tx, ty));
     const int start = (int)g.playerY * MAP_W + (int)g.playerX;
     parent[start] = 0xFFFF;
     qx[0] = g.playerX;
@@ -207,7 +239,12 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
             if (!standOn) {
                 int dx = x > (int)tx ? x - (int)tx : (int)tx - x;
                 int dy = y > (int)ty ? y - (int)ty : (int)ty - y;
-                if ((dx > dy ? dx : dy) <= 1) {
+                int cheb = dx > dy ? dx : dy;
+                if (cheb <= 1) {
+                    found = here;
+                    break;
+                }
+                if (cheb <= 2 && groundAt(g, tx, ty) == G_BED) {
                     found = here;
                     break;
                 }
@@ -229,7 +266,7 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
             if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
             const int ni = ny * MAP_W + nx;
             if (parent[ni] != 0) continue;
-            if (!walkable(g.cells[ny][nx].ground)) continue;
+            if (!walkable(groundAt(g, (uint8_t)nx, (uint8_t)ny))) continue;
             if (!standOn && nx == (int)tx && ny == (int)ty) continue;
             parent[ni] = (uint16_t)(here + 1);
             qx[qt] = (uint8_t)nx;
@@ -371,6 +408,14 @@ static int tileDist(const GameState& g, uint8_t tx, uint8_t ty) {
     return dx > dy ? dx : dy;
 }
 
+// Beds cover two rows and the pillows sit against the wall, so a tap on the
+// headboard is two tiles from the walkable foot. Allow that reach indoors.
+static bool closeEnoughToAct(const GameState& g, uint8_t tx, uint8_t ty) {
+    int dist = tileDist(g, tx, ty);
+    if (dist <= 1) return true;
+    return g.place == PLACE_HOUSE && groundAt(g, tx, ty) == G_BED && dist <= 2;
+}
+
 static bool toolReady(const GameState& g, const Cell& cell) {
     switch (g.tool) {
         case TOOL_HOE:
@@ -386,12 +431,31 @@ static bool toolReady(const GameState& g, const Cell& cell) {
     }
 }
 
+static bool interactable(const GameState& g, uint8_t tx, uint8_t ty) {
+    if (g.place == PLACE_FARM && isFarmDoor(tx, ty)) return true;
+    uint8_t ground = groundAt(g, tx, ty);
+    if (g.place == PLACE_HOUSE && ground == G_DOOR) return true;
+    if (ground == G_BED || ground == G_BIN) return true;
+    return g.place == PLACE_FARM && toolReady(g, g.cells[ty][tx]);
+}
+
 static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
-    Cell& cell = g.cells[ty][tx];
-    if (cell.ground == G_BED) {
+    // The outdoor door tiles are still stored as beds in old saves.
+    if (g.place == PLACE_FARM && isFarmDoor(tx, ty)) {
+        enterHouse(g);
+        return;
+    }
+    uint8_t ground = groundAt(g, tx, ty);
+    if (g.place == PLACE_HOUSE && ground == G_DOOR) {
+        exitHouse(g);
+        return;
+    }
+    if (ground == G_BED) {
         useBed(g);
         return;
     }
+    if (g.place == PLACE_HOUSE) return;
+    Cell& cell = g.cells[ty][tx];
     if (cell.ground == G_BIN) {
         useBin(g);
         return;
@@ -402,9 +466,20 @@ static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
 void gameTapTile(GameState& g, uint8_t tx, uint8_t ty) {
     if (tx >= MAP_W || ty >= MAP_H) return;
 
-    if (tileDist(g, tx, ty) <= 1) {
+    if (closeEnoughToAct(g, tx, ty)) {
+        if (interactable(g, tx, ty)) {
+            g.hasDest = false;
+            actOnTile(g, tx, ty);
+            return;
+        }
+        if (g.place == PLACE_HOUSE && walkable(groundAt(g, tx, ty))) {
+            g.playerX = tx;
+            g.playerY = ty;
+            g.hasDest = false;
+            return;
+        }
         g.hasDest = false;
-        actOnTile(g, tx, ty);
+        if (g.place != PLACE_HOUSE) actOnTile(g, tx, ty);
         return;
     }
 
@@ -426,14 +501,13 @@ void gameFollow(GameState& g) {
         return;
     }
 
-    const Cell& cell = g.cells[g.destY][g.destX];
-    if (tileDist(g, g.destX, g.destY) <= 1) {
-        if (cell.ground == G_BED || cell.ground == G_BIN || toolReady(g, cell)) {
+    if (closeEnoughToAct(g, g.destX, g.destY)) {
+        if (interactable(g, g.destX, g.destY)) {
             g.hasDest = false;
             actOnTile(g, g.destX, g.destY);
             return;
         }
-        if (!walkable(cell.ground)) {
+        if (!walkable(groundAt(g, g.destX, g.destY))) {
             g.hasDest = false;
             return;
         }
@@ -503,9 +577,10 @@ bool gameSave(const GameState& g) {
     int n = snprintf(
         body, sizeof(body),
         "{\"v\":1,\"day\":%u,\"hour\":%u,\"minute\":%u,\"gold\":%u,\"seeds\":%u,\"crops\":%u,"
-        "\"stamina\":%u,\"px\":%u,\"py\":%u,\"tool\":%u,\"cells\":\"%s\"}",
+        "\"stamina\":%u,\"px\":%u,\"py\":%u,\"tool\":%u,\"in\":%u,\"cells\":\"%s\"}",
         (unsigned)g.day, g.hour, g.minute, (unsigned)g.gold, (unsigned)g.seeds,
-        (unsigned)g.crops, (unsigned)g.stamina, g.playerX, g.playerY, (unsigned)g.tool, cells);
+        (unsigned)g.crops, (unsigned)g.stamina, g.playerX, g.playerY, (unsigned)g.tool,
+        (unsigned)g.place, cells);
     if (n <= 0 || (size_t)n >= sizeof(body)) return false;
     return assetsWriteFile(SD_SAVE_PATH, (const uint8_t*)body, (size_t)n);
 }
@@ -546,11 +621,14 @@ static bool gameLoadBody(GameState& g, char* body) {
     int px = jsonInt(body, "px", g.playerX);
     int py = jsonInt(body, "py", g.playerY);
     int tool = jsonInt(body, "tool", TOOL_HOE);
+    int inside = jsonInt(body, "in", PLACE_FARM);
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
     if (px < 0 || py < 0 || px >= MAP_W || py >= MAP_H) return false;
     if (tool < 0 || tool >= TOOL_COUNT) return false;
+    if (inside != PLACE_FARM && inside != PLACE_HOUSE) return false;
 
     memcpy(g.cells, decoded, sizeof(g.cells));
+    g.place = (uint8_t)inside;
     g.day = (uint16_t)(day < 1 ? 1 : day);
     g.hour = (uint8_t)hour;
     g.minute = (uint8_t)minute;
@@ -558,9 +636,13 @@ static bool gameLoadBody(GameState& g, char* body) {
     g.seeds = (uint8_t)(seeds < 0 ? 0 : seeds > 255 ? 255 : seeds);
     g.crops = (uint8_t)(crops < 0 ? 0 : crops > 255 ? 255 : crops);
     g.stamina = (uint8_t)(stamina < 0 ? 0 : stamina > STAMINA_MAX ? STAMINA_MAX : stamina);
-    if (walkable(g.cells[py][px].ground)) {
+    uint8_t feet = g.place == PLACE_HOUSE ? houseGround((uint8_t)px, (uint8_t)py) : g.cells[py][px].ground;
+    if (walkable(feet)) {
         g.playerX = (uint8_t)px;
         g.playerY = (uint8_t)py;
+    } else if (g.place == PLACE_HOUSE) {
+        g.playerX = HOUSE_SPAWN_X;
+        g.playerY = HOUSE_SPAWN_Y;
     }
     g.tool = (Tool)tool;
     g.saveDirty = false;

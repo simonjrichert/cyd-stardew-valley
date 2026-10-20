@@ -14,7 +14,13 @@ enum Ground : uint8_t {
     G_FLOOR,
     G_BIN,
     G_BED,
-    G_PATH
+    G_PATH,
+    G_DOOR
+};
+
+enum Place : uint8_t {
+    PLACE_FARM = 0,
+    PLACE_HOUSE = 1
 };
 
 enum Tool : uint8_t {
@@ -53,6 +59,7 @@ struct GameState {
     uint8_t destX;
     uint8_t destY;
     bool hasDest;
+    uint8_t place;  // PLACE_FARM or PLACE_HOUSE
 };
 
 void gameInit(GameState& g);
