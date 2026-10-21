@@ -217,6 +217,47 @@ def main():
     # Fallen apple beside the trunk.
     blit_sheet(misc_sheet, 208, 400, 16, 16, 15 * 16, 4 * 16, G_FORAGE, crop_v=1, cover=8)
 
+    # Mine entrance on the open lawn east of the house. Two tiles tall; the
+    # farmer walks to the grass south of it and taps the hole, like the door.
+    mines_sheet = ip.load_png(
+        ROOT / "assets" / "stardew" / "Tilesets" / (
+            "PC _ Computer - Stardew Valley - Tilesets - The Mines _ Skull Cavern.png"
+        )
+    )
+
+    def mines_cell(tx, ty):
+        return ip.cell(mines_sheet[3], mines_sheet[2], tx, ty)
+
+    def cave_arch(tile):
+        out = [list(row) for row in tile]
+        for y in range(16):
+            for x in range(16):
+                # Doorway: an arch in the lower two thirds.
+                nx = (x - 7.5) / 4.6
+                ny = (y - 11.0) / 8.2
+                if y < 3:
+                    continue
+                if nx * nx + max(0.0, ny) * max(0.0, ny) < 1.0 and y >= 4:
+                    if nx * nx + max(0.0, ny) * max(0.0, ny) > 0.72:
+                        out[y][x] = (86, 58, 28, 255)
+                    elif y < 7:
+                        out[y][x] = (28, 18, 10, 255)
+                    else:
+                        out[y][x] = (12, 8, 6, 255)
+        return out
+
+    cave_top = ip.composite(mines_cell(8, 4), art[4][7])
+    cave_bot = cave_arch(ip.composite(mines_cell(9, 5), art[5][7]))
+    stamp(7, 4, cave_top, G_FENCE)
+    stamp(7, 5, cave_bot, G_FENCE)
+    # A few rocks spill onto the lawn east of the mouth so it is not a 16px pole.
+    spill = ip.composite(mines_cell(10, 5), art[5][8])
+    for y in range(16):
+        for x in range(16):
+            if x > 5:
+                spill[y][x] = art[5][8][y][x]
+    art[5][8] = spill
+
     # 32x32 animals, two frames each, quadrants TL TR BL BR.
     def add_quad(img, fx, fy, onto_grass=True):
         ids = []

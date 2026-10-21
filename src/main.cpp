@@ -7,6 +7,7 @@
 #include "Config.h"
 #include "Game.h"
 #include "Interior.h"
+#include "Mine.h"
 #include "Produce.h"
 #include "Sprites.h"
 #include "Tilemap.h"
@@ -219,6 +220,10 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
         for (int tx = 0; tx < MAP_W; ++tx) {
             if (game.place == PLACE_HOUSE) {
                 blitHouse(*v.spr, tx * TILE, sy, houseTile((uint8_t)tx, (uint8_t)ty), shadeNum);
+                continue;
+            }
+            if (game.place == PLACE_MINE) {
+                blitHouse(*v.spr, tx * TILE, sy, mineTile((uint8_t)tx, (uint8_t)ty), shadeNum);
                 continue;
             }
             const Cell& cell = game.cells[ty][tx];
@@ -471,7 +476,7 @@ static bool readTouch(int& sx, int& sy) {
 static bool touchOnHotbar(int sy) {
     // Farm hotbar has 8 px of slop into row 12. In the house that band is the
     // south wall and the door, so only the real hotbar rows count there.
-    if (game.place == PLACE_HOUSE) return sy >= HOTBAR_Y;
+    if (game.place == PLACE_HOUSE || game.place == PLACE_MINE) return sy >= HOTBAR_Y;
     return sy >= HOTBAR_HIT_Y;
 }
 

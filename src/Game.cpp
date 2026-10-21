@@ -2,6 +2,7 @@
 
 #include "Assets.h"
 #include "Interior.h"
+#include "Mine.h"
 #include "Tilemap.h"
 
 #include <stdio.h>
@@ -44,12 +45,21 @@ static bool isFarmDoor(uint8_t x, uint8_t y) {
     return y == FARM_DOOR_Y && x >= FARM_DOOR_X0 && x <= FARM_DOOR_X1;
 }
 
+static bool isFarmMine(uint8_t x, uint8_t y) {
+    return x == FARM_MINE_X && y >= FARM_MINE_Y0 && y <= FARM_MINE_Y1;
+}
+
 static bool isFruitTree(uint8_t x, uint8_t y) {
     return x >= 12 && x <= 14 && y <= 4;
 }
 
+static bool indoors(const GameState& g) {
+    return g.place == PLACE_HOUSE || g.place == PLACE_MINE;
+}
+
 static uint8_t groundAt(const GameState& g, uint8_t x, uint8_t y) {
     if (g.place == PLACE_HOUSE) return houseGround(x, y);
+    if (g.place == PLACE_MINE) return mineGround(x, y);
     return g.cells[y][x].ground;
 }
 
@@ -67,6 +77,26 @@ static void exitHouse(GameState& g) {
     g.place = PLACE_FARM;
     g.playerX = FARM_EXIT_X;
     g.playerY = FARM_EXIT_Y;
+    g.hasDest = false;
+    setToast(g, "Outside");
+    if (gameSave(g)) g.saveDirty = false;
+    else markSave(g);
+}
+
+static void enterMine(GameState& g) {
+    g.place = PLACE_MINE;
+    g.playerX = MINE_SPAWN_X;
+    g.playerY = MINE_SPAWN_Y;
+    g.hasDest = false;
+    setToast(g, "The mines");
+    if (gameSave(g)) g.saveDirty = false;
+    else markSave(g);
+}
+
+static void exitMine(GameState& g) {
+    g.place = PLACE_FARM;
+    g.playerX = FARM_MINE_EXIT_X;
+    g.playerY = FARM_MINE_EXIT_Y;
     g.hasDest = false;
     setToast(g, "Outside");
     if (gameSave(g)) g.saveDirty = false;
@@ -528,10 +558,11 @@ static bool petAnimal(GameState& g, uint8_t x, uint8_t y) {
 
 static bool interactable(const GameState& g, uint8_t tx, uint8_t ty) {
     if (g.place == PLACE_FARM && isFarmDoor(tx, ty)) return true;
+    if (g.place == PLACE_FARM && isFarmMine(tx, ty)) return true;
     if (g.place == PLACE_FARM && petBitAt(tx, ty) != 0) return true;
     uint8_t ground = groundAt(g, tx, ty);
     if (g.place == PLACE_FARM && ground == G_FORAGE) return true;
-    if (g.place == PLACE_HOUSE && ground == G_DOOR) return true;
+    if (indoors(g) && ground == G_DOOR) return true;
     if (ground == G_BED || ground == G_BIN) return true;
     return g.place == PLACE_FARM && toolReady(g, g.cells[ty][tx]);
 }
@@ -542,16 +573,24 @@ static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
         enterHouse(g);
         return;
     }
+    if (g.place == PLACE_FARM && isFarmMine(tx, ty)) {
+        enterMine(g);
+        return;
+    }
     uint8_t ground = groundAt(g, tx, ty);
     if (g.place == PLACE_HOUSE && ground == G_DOOR) {
         exitHouse(g);
+        return;
+    }
+    if (g.place == PLACE_MINE && ground == G_DOOR) {
+        exitMine(g);
         return;
     }
     if (ground == G_BED) {
         useBed(g);
         return;
     }
-    if (g.place == PLACE_HOUSE) return;
+    if (indoors(g)) return;
     if (petAnimal(g, tx, ty)) return;
     Cell& cell = g.cells[ty][tx];
     if (cell.ground == G_FORAGE) {
@@ -577,6 +616,10 @@ static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
 
 void gameTapTile(GameState& g, uint8_t tx, uint8_t ty) {
     if (tx >= MAP_W || ty >= MAP_H) return;
+    // Only the ladder's foot can be reached from the floor.
+    if (g.place == PLACE_MINE) {
+        while (ty + 1 < MAP_H && mineGround(tx, ty) == G_DOOR && mineGround(tx, ty + 1) == G_DOOR) ty++;
+    }
 
     if (closeEnoughToAct(g, tx, ty)) {
         if (interactable(g, tx, ty)) {
@@ -584,14 +627,14 @@ void gameTapTile(GameState& g, uint8_t tx, uint8_t ty) {
             actOnTile(g, tx, ty);
             return;
         }
-        if (g.place == PLACE_HOUSE && walkable(g, tx, ty)) {
+        if (indoors(g) && walkable(g, tx, ty)) {
             g.playerX = tx;
             g.playerY = ty;
             g.hasDest = false;
             return;
         }
         g.hasDest = false;
-        if (g.place != PLACE_HOUSE) actOnTile(g, tx, ty);
+        if (g.place == PLACE_FARM) actOnTile(g, tx, ty);
         return;
     }
 
@@ -745,7 +788,7 @@ static bool gameLoadBody(GameState& g, char* body) {
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
     if (px < 0 || py < 0 || px >= MAP_W || py >= MAP_H) return false;
     if (tool < 0 || tool >= TOOL_COUNT) return false;
-    if (inside != PLACE_FARM && inside != PLACE_HOUSE) return false;
+    if (inside != PLACE_FARM && inside != PLACE_HOUSE && inside != PLACE_MINE) return false;
 
     memcpy(g.cells, decoded, sizeof(g.cells));
     g.place = (uint8_t)inside;
@@ -780,6 +823,9 @@ static bool gameLoadBody(GameState& g, char* body) {
     } else if (g.place == PLACE_HOUSE) {
         g.playerX = HOUSE_SPAWN_X;
         g.playerY = HOUSE_SPAWN_Y;
+    } else if (g.place == PLACE_MINE) {
+        g.playerX = MINE_SPAWN_X;
+        g.playerY = MINE_SPAWN_Y;
     }
     g.tool = (Tool)tool;
     g.saveDirty = false;
