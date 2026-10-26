@@ -55,12 +55,13 @@ struct View {
     int height;
 };
 
-// The ILI9341 wants the high byte first. The sprite stores little-endian
-// values and pushSprite does not swap them, so green was drawn as brown
-// and then looked cyan once inversion was turned on.
+// Numeric RGB565, same packing as TFT_RED. Sprite fillRect/drawPixel already
+// byte-swap when they write the framebuffer (TFT_eSprite does this because
+// pushSprite dumps little-endian RAM to an ILI9341 that wants the high byte
+// first). pushImage with setSwapBytes(false) does not swap, so those paths
+// still call swap565() themselves.
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
-    uint16_t color = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-    return (uint16_t)((color << 8) | (color >> 8));
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
 static inline uint16_t swap565(uint16_t color) {
@@ -235,14 +236,18 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
     }
 }
 
-static void blitRgb16(const View& v, int x, int y, const uint16_t* pix) {
+static void blitRgb16x2(const View& v, int x, int y, const uint16_t* pix) {
     for (int py = 0; py < TILE; ++py) {
-        int sy = y + py;
-        if (sy < v.originY || sy >= v.originY + v.height) continue;
-        for (int px = 0; px < TILE; ++px) {
-            uint16_t color = pgm_read_word(pix + py * TILE + px);
-            if (color == 0) continue;
-            v.spr->drawPixel(x + px, sy - v.originY, swap565(color));
+        for (int syOff = 0; syOff < 2; ++syOff) {
+            int sy = y + py * 2 + syOff;
+            if (sy < v.originY || sy >= v.originY + v.height) continue;
+            int dy = sy - v.originY;
+            for (int px = 0; px < TILE; ++px) {
+                uint16_t color = pgm_read_word(pix + py * TILE + px);
+                if (color == 0) continue;
+                v.spr->drawPixel(x + px * 2, dy, color);
+                v.spr->drawPixel(x + px * 2 + 1, dy, color);
+            }
         }
     }
 }
@@ -254,7 +259,7 @@ static void blitIcon8(const View& v, int x, int y, const uint16_t* icon) {
         for (int px = 0; px < 8; ++px) {
             uint16_t color = pgm_read_word(icon + (py * 2) * 16 + (px * 2));
             if (color == 0) continue;
-            v.spr->drawPixel(x + px, sy - v.originY, swap565(color));
+            v.spr->drawPixel(x + px, sy - v.originY, color);
         }
     }
 }
@@ -321,31 +326,34 @@ static const uint16_t* hotbarIcon(int slot) {
 static void drawHotbar(const View& v) {
     const uint16_t gold = rgb565(236, 196, 56);
     const uint16_t cream = rgb565(248, 236, 210);
-    fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, HOTBAR_H, rgb565(74, 46, 22));
-    fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, 3, rgb565(110, 72, 36));
+    const uint16_t bar = rgb565(62, 40, 22);
+    const uint16_t well = rgb565(40, 24, 12);
+    const uint16_t rim = rgb565(140, 88, 40);
+    fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, HOTBAR_H, bar);
     fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, 1, gold);
 
     for (int i = 0; i < HOTBAR_SLOTS; ++i) {
         int x = HOTBAR_X + i * (HOTBAR_SLOT + HOTBAR_GAP);
         int y = HOTBAR_ICON_Y;
         bool selected = ((int)game.tool == i);
+        fillScreenRect(v, x, y, HOTBAR_SLOT, HOTBAR_SLOT, selected ? gold : rim);
+        fillScreenRect(v, x + 2, y + 2, HOTBAR_SLOT - 4, HOTBAR_SLOT - 4, well);
         const uint16_t* icon = hotbarIcon(i);
-        blitRgb16(v, x, y, icon ? HOTBAR_BOX : HOTBAR_BOX_EMPTY);
-        if (icon) blitRgb16(v, x, y, icon);
+        if (icon) blitRgb16x2(v, x, y, icon);
         if (selected) {
-            fillScreenRect(v, x - 1, y - 1, HOTBAR_SLOT + 2, 1, cream);
-            fillScreenRect(v, x - 1, y + HOTBAR_SLOT, HOTBAR_SLOT + 2, 1, cream);
-            fillScreenRect(v, x - 1, y - 1, 1, HOTBAR_SLOT + 2, cream);
-            fillScreenRect(v, x + HOTBAR_SLOT, y - 1, 1, HOTBAR_SLOT + 2, cream);
+            fillScreenRect(v, x, y, HOTBAR_SLOT, 2, cream);
+            fillScreenRect(v, x, y + HOTBAR_SLOT - 2, HOTBAR_SLOT, 2, cream);
+            fillScreenRect(v, x, y, 2, HOTBAR_SLOT, cream);
+            fillScreenRect(v, x + HOTBAR_SLOT - 2, y, 2, HOTBAR_SLOT, cream);
         }
         char sub[8];
         sub[0] = '\0';
         if (i == TOOL_SEED) snprintf(sub, sizeof(sub), "%u", (unsigned)game.seeds);
         if (i == TOOL_HARVEST) snprintf(sub, sizeof(sub), "%u", (unsigned)game.crops);
         if (sub[0] != '\0') {
-            int subX = x + HOTBAR_SLOT - (int)strlen(sub) * 6;
-            if (subX < x) subX = x;
-            textAt(v, subX, y + HOTBAR_SLOT - 8, gold, sub);
+            int subX = x + HOTBAR_SLOT - 2 - (int)strlen(sub) * 6;
+            if (subX < x + 2) subX = x + 2;
+            textAt(v, subX, y + HOTBAR_SLOT - 10, gold, sub);
         }
     }
 }
