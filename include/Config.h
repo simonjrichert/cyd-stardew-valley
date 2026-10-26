@@ -77,12 +77,18 @@ static constexpr uint8_t  SEEDS_START = 10;
 static constexpr uint8_t CROP_MATURE = 3;
 
 // HUD covers the top 16 px. Hotbar is drawn at y 208..239.
-// The hit row starts 8 px higher so the buttons are easier to press,
+// The hit row starts 8 px higher so the slots are easier to press,
 // and it stops there so the crop rows above are not treated as buttons.
 static constexpr int HUD_H         = 16;
 static constexpr int HOTBAR_Y      = 208;
 static constexpr int HOTBAR_H      = 32;
 static constexpr int HOTBAR_HIT_Y  = 200;
+static constexpr int HOTBAR_SLOTS  = 8;
+static constexpr int HOTBAR_SLOT   = 16;
+static constexpr int HOTBAR_GAP    = 2;
+static constexpr int HOTBAR_W      = HOTBAR_SLOTS * HOTBAR_SLOT + (HOTBAR_SLOTS - 1) * HOTBAR_GAP;
+static constexpr int HOTBAR_X      = (SCREEN_W - HOTBAR_W) / 2;
+static constexpr int HOTBAR_ICON_Y = HOTBAR_Y + (HOTBAR_H - HOTBAR_SLOT) / 2;
 
 // Night window is 18:00 through 05:59. World pixels are scaled by NIGHT_NUM/16.
 static constexpr uint8_t NIGHT_HOUR_START = 18;

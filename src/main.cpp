@@ -6,6 +6,7 @@
 #include "Assets.h"
 #include "Config.h"
 #include "Game.h"
+#include "Hotbar.h"
 #include "Interior.h"
 #include "Mine.h"
 #include "Produce.h"
@@ -65,10 +66,6 @@ static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
 static inline uint16_t swap565(uint16_t color) {
     return (uint16_t)((color << 8) | (color >> 8));
 }
-
-static const char* const TOOL_LABELS[TOOL_COUNT] = {
-    "HOE", "WATER", "SEED", "HARVEST"
-};
 
 static void radioOff() {
     // Radios are stopped before the framebuffer allocation so their DMA
@@ -238,6 +235,18 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
     }
 }
 
+static void blitRgb16(const View& v, int x, int y, const uint16_t* pix) {
+    for (int py = 0; py < TILE; ++py) {
+        int sy = y + py;
+        if (sy < v.originY || sy >= v.originY + v.height) continue;
+        for (int px = 0; px < TILE; ++px) {
+            uint16_t color = pgm_read_word(pix + py * TILE + px);
+            if (color == 0) continue;
+            v.spr->drawPixel(x + px, sy - v.originY, swap565(color));
+        }
+    }
+}
+
 static void blitIcon8(const View& v, int x, int y, const uint16_t* icon) {
     for (int py = 0; py < 8; ++py) {
         int sy = y + py;
@@ -299,31 +308,44 @@ static void drawHud(const View& v) {
     if (inner > 0) fillScreenRect(v, bx + 1, 5, inner, 6, staminaColor);
 }
 
+static const uint16_t* hotbarIcon(int slot) {
+    switch (slot) {
+        case TOOL_HOE: return ICON_HOE;
+        case TOOL_WATER: return ICON_WATER;
+        case TOOL_SEED: return ICON_SEED;
+        case TOOL_HARVEST: return ICON_HARVEST;
+        default: return nullptr;
+    }
+}
+
 static void drawHotbar(const View& v) {
     const uint16_t gold = rgb565(236, 196, 56);
-    for (int i = 0; i < TOOL_COUNT; ++i) {
-        int x = i * (SCREEN_W / TOOL_COUNT);
-        int w = SCREEN_W / TOOL_COUNT;
+    const uint16_t cream = rgb565(248, 236, 210);
+    fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, HOTBAR_H, rgb565(74, 46, 22));
+    fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, 3, rgb565(110, 72, 36));
+    fillScreenRect(v, 0, HOTBAR_Y, SCREEN_W, 1, gold);
+
+    for (int i = 0; i < HOTBAR_SLOTS; ++i) {
+        int x = HOTBAR_X + i * (HOTBAR_SLOT + HOTBAR_GAP);
+        int y = HOTBAR_ICON_Y;
         bool selected = ((int)game.tool == i);
-        fillScreenRect(v, x, HOTBAR_Y, w, HOTBAR_H, selected ? rgb565(148, 96, 48) : rgb565(92, 58, 28));
+        const uint16_t* icon = hotbarIcon(i);
+        blitRgb16(v, x, y, icon ? HOTBAR_BOX : HOTBAR_BOX_EMPTY);
+        if (icon) blitRgb16(v, x, y, icon);
         if (selected) {
-            fillScreenRect(v, x, HOTBAR_Y, w, 2, gold);
-            fillScreenRect(v, x, HOTBAR_Y + HOTBAR_H - 2, w, 2, gold);
-            fillScreenRect(v, x, HOTBAR_Y, 2, HOTBAR_H, gold);
-            fillScreenRect(v, x + w - 2, HOTBAR_Y, 2, HOTBAR_H, gold);
+            fillScreenRect(v, x - 1, y - 1, HOTBAR_SLOT + 2, 1, cream);
+            fillScreenRect(v, x - 1, y + HOTBAR_SLOT, HOTBAR_SLOT + 2, 1, cream);
+            fillScreenRect(v, x - 1, y - 1, 1, HOTBAR_SLOT + 2, cream);
+            fillScreenRect(v, x + HOTBAR_SLOT, y - 1, 1, HOTBAR_SLOT + 2, cream);
         }
-
-        const char* label = TOOL_LABELS[i];
-        int labelX = x + (w - (int)strlen(label) * 6) / 2;
-        textAt(v, labelX, HOTBAR_Y + 6, rgb565(248, 236, 210), label);
-
         char sub[8];
         sub[0] = '\0';
-        if (i == TOOL_SEED) snprintf(sub, sizeof(sub), "x%u", (unsigned)game.seeds);
-        if (i == TOOL_HARVEST) snprintf(sub, sizeof(sub), "x%u", (unsigned)game.crops);
+        if (i == TOOL_SEED) snprintf(sub, sizeof(sub), "%u", (unsigned)game.seeds);
+        if (i == TOOL_HARVEST) snprintf(sub, sizeof(sub), "%u", (unsigned)game.crops);
         if (sub[0] != '\0') {
-            int subX = x + (w - (int)strlen(sub) * 6) / 2;
-            textAt(v, subX, HOTBAR_Y + 16, gold, sub);
+            int subX = x + HOTBAR_SLOT - (int)strlen(sub) * 6;
+            if (subX < x) subX = x;
+            textAt(v, subX, y + HOTBAR_SLOT - 8, gold, sub);
         }
     }
 }
@@ -482,12 +504,14 @@ static bool touchOnHotbar(int sy) {
 
 static void dispatchTouch(int sx, int sy, bool freshPress) {
     if (touchOnHotbar(sy)) {
-        int slot = sx / (SCREEN_W / TOOL_COUNT);
-        if (slot < 0) slot = 0;
-        if (slot >= TOOL_COUNT) slot = TOOL_COUNT - 1;
+        int local = sx - HOTBAR_X;
+        int stride = HOTBAR_SLOT + HOTBAR_GAP;
+        int slot = local / stride;
+        int inner = local - slot * stride;
         static int heldSlot = -1;
         if (freshPress) heldSlot = -1;
         game.hasDest = false;
+        if (slot < 0 || slot >= TOOL_COUNT || inner >= HOTBAR_SLOT) return;
         if (slot != heldSlot) {
             heldSlot = slot;
             gameSelectTool(game, (Tool)slot);
