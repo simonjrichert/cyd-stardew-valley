@@ -7,6 +7,13 @@
 // floor tile below its foot.
 const uint16_t* mineTile(uint8_t x, uint8_t y);
 uint8_t mineGround(uint8_t x, uint8_t y);
+uint8_t mineRockKind(uint8_t x, uint8_t y);
+const uint16_t* mineRockArt(uint8_t kind);
+
+static constexpr uint8_t ROCK_NONE   = 0;
+static constexpr uint8_t ROCK_STONE  = 1;
+static constexpr uint8_t ROCK_COPPER = 2;
+static constexpr uint8_t ROCK_IRON   = 3;
 
 static constexpr uint8_t MINE_SPAWN_X = 7;
 static constexpr uint8_t MINE_SPAWN_Y = 5;

@@ -207,6 +207,16 @@ static void blitHouse(TFT_eSprite& dst, int x, int y, const uint16_t* tile, uint
     dst.pushImage(x, y, TILE, TILE, buf);
 }
 
+static void blitRgb16(TFT_eSprite& dst, int x, int y, const uint16_t* pix, uint8_t shadeNum) {
+    for (int py = 0; py < TILE; ++py) {
+        for (int px = 0; px < TILE; ++px) {
+            uint16_t color = pgm_read_word(pix + py * TILE + px);
+            if (color == 0) continue;
+            dst.drawPixel(x + px, y + py, shade565(color, shadeNum));
+        }
+    }
+}
+
 static void drawWorld(const View& v, uint8_t shadeNum) {
     int y0 = v.originY / TILE;
     int y1 = (v.originY + v.height - 1) / TILE;
@@ -222,6 +232,12 @@ static void drawWorld(const View& v, uint8_t shadeNum) {
             }
             if (game.place == PLACE_MINE) {
                 blitHouse(*v.spr, tx * TILE, sy, mineTile((uint8_t)tx, (uint8_t)ty), shadeNum);
+                uint8_t hits = game.mineHits[ty][tx];
+                if (hits != 0) {
+                    uint8_t rockShade = hits == 1 ? (uint8_t)(shadeNum * 10 / 16) : shadeNum;
+                    if (rockShade < 6) rockShade = 6;
+                    blitRgb16(*v.spr, tx * TILE, sy, mineRockArt(mineRockKind((uint8_t)tx, (uint8_t)ty)), rockShade);
+                }
                 continue;
             }
             const Cell& cell = game.cells[ty][tx];
@@ -319,6 +335,7 @@ static const uint16_t* hotbarIcon(int slot) {
         case TOOL_WATER: return ICON_WATER;
         case TOOL_SEED: return ICON_SEED;
         case TOOL_HARVEST: return ICON_HARVEST;
+        case TOOL_PICKAXE: return ICON_PICKAXE;
         default: return nullptr;
     }
 }

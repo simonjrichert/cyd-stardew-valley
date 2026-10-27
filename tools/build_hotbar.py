@@ -148,6 +148,9 @@ def main():
     bucket = grab(tools, tbpp, 6 * 16, 0, key=True)
     seed = grab(misc, mbpp, 24 * 16, 11 * 16, key=True)
     scythe = grab(tools, tbpp, 0, 300, key=True)
+    # Copper T-pickaxe. The sprite is taller than 16px; y=90 keeps the head
+    # and enough handle (the sheet row starts at 96 and would crop to a stick).
+    pickaxe = grab(tools, tbpp, 2 * 16, 90, key=True)
 
     lines = [
         "#pragma once",
@@ -164,6 +167,7 @@ def main():
     lines += emit("ICON_WATER", bucket, "Bucket, used to water tilled soil.")
     lines += emit("ICON_SEED", seed, "Parsnip seed bag.")
     lines += emit("ICON_HARVEST", scythe, "Scythe.")
+    lines += emit("ICON_PICKAXE", pickaxe, "Copper pickaxe.")
     OUT.write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {OUT}")
 
@@ -180,7 +184,7 @@ def main():
     for x in range(SCREEN_W):
         pix[HOTBAR_Y * SCREEN_W + x] = gold
 
-    icons = [hoe, bucket, seed, scythe]
+    icons = [hoe, bucket, seed, scythe, pickaxe]
 
     def fill(x0, y0, w, h, c):
         for yy in range(y0, y0 + h):
@@ -192,7 +196,7 @@ def main():
         y = ICON_Y
         fill(x, y, SLOT, SLOT, gold if i == 0 else rim)
         fill(x + 2, y + 2, SLOT - 4, SLOT - 4, well)
-        if i < 4:
+        if i < 5:
             blit_tile_2x(pix, x, y, icons[i], SCREEN_W)
         if i == 0:
             fill(x, y, SLOT, 2, cream)

@@ -24,11 +24,39 @@ import import_pack as ip
 ROOT = ip.ROOT
 STARDEW = ROOT / "assets" / "stardew"
 MINES = STARDEW / "Tilesets" / "PC _ Computer - Stardew Valley - Tilesets - The Mines _ Skull Cavern.png"
+MISC = (
+    STARDEW
+    / "Miscellaneous"
+    / (
+        "PC _ Computer - Stardew Valley - Miscellaneous - Harvested Crops, "
+        "Seed Packets, Minerals, Food, Equipment, & Miscellaneous Objects.png"
+    )
+)
 OUT_CPP = ROOT / "src" / "Mine.cpp"
 PREVIEW = ROOT / "tools" / "_mine_preview.png"
 HTML = ROOT / "tools" / "_mine_preview.html"
 
 G_FENCE, G_FLOOR, G_DOOR = 4, 5, 9
+ROCK_NONE, ROCK_STONE, ROCK_COPPER, ROCK_IRON = 0, 1, 2, 3
+
+# Floor rocks. Keep spawn (7,5), the ladder walk-off, rails, crate, and barrel clear.
+ROCKS = [
+    (6, 6, ROCK_STONE),
+    (10, 6, ROCK_STONE),
+    (12, 6, ROCK_COPPER),
+    (15, 6, ROCK_STONE),
+    (4, 7, ROCK_STONE),
+    (8, 7, ROCK_STONE),
+    (11, 7, ROCK_IRON),
+    (6, 9, ROCK_COPPER),
+    (9, 9, ROCK_STONE),
+    (12, 9, ROCK_STONE),
+    (15, 9, ROCK_STONE),
+    (4, 10, ROCK_STONE),
+    (10, 10, ROCK_STONE),
+    (14, 10, ROCK_IRON),
+    (8, 11, ROCK_STONE),
+]
 
 W, H = 20, 15
 PW, PH = W * 16, H * 16
@@ -280,6 +308,32 @@ def main():
                 fx, fy = ferns[hash16(x, y, 23) % len(ferns)]
                 room[y][x] = over(t(fx, fy), black)
 
+    _mw, _mh, mbpp, misc = ip.load_png(MISC)
+
+    def grab_obj(tx, ty):
+        tile = []
+        for y in range(16):
+            row = []
+            for x in range(16):
+                r, g, b, a = ip.pix(misc, mbpp, tx * 16 + x, ty * 16 + y)
+                row.append((r, g, b, 255) if a >= 40 else (0, 0, 0, 0))
+            tile.append(row)
+        return tile
+
+    rock_art = {
+        ROCK_STONE: grab_obj(10, 1),
+        ROCK_COPPER: grab_obj(14, 1),
+        ROCK_IRON: grab_obj(12, 1),
+    }
+
+    rock_kind = [[ROCK_NONE] * W for _ in range(H)]
+    for x, y, kind in ROCKS:
+        if ground[y][x] != G_FLOOR:
+            raise SystemExit(f"rock at {x},{y} is not floor")
+        if (x, y) == (SPAWN_X, SPAWN_Y):
+            raise SystemExit("rock on spawn")
+        rock_kind[y][x] = kind
+
     if ground[SPAWN_Y][SPAWN_X] != G_FLOOR:
         raise SystemExit(f"spawn not on floor at {SPAWN_X},{SPAWN_Y}")
 
@@ -310,9 +364,29 @@ def main():
     lines += ["    {" + ", ".join(str(v) for v in row) + "}," for row in art]
     lines += ["};", "", "static const uint8_t MINE_GROUND[15][20] PROGMEM = {"]
     lines += ["    {" + ", ".join(str(v) for v in row) + "}," for row in ground]
+    lines += ["};", "", "static const uint8_t MINE_ROCK[15][20] PROGMEM = {"]
+    lines += ["    {" + ", ".join(str(v) for v in row) + "}," for row in rock_kind]
+
+    def emit_rock(name, tile):
+        vals = []
+        for row in tile:
+            for px in row:
+                if px[3] < 40:
+                    vals.append("0x0000")
+                else:
+                    vals.append(f"0x{rgb565(px[0], px[1], px[2]):04X}")
+        return [
+            f"static const uint16_t {name}[256] PROGMEM = {{",
+            "    " + ", ".join(vals) + ",",
+            "};",
+            "",
+        ]
+
+    lines += ["};", ""]
+    lines += emit_rock("ROCK_ART_STONE", rock_art[ROCK_STONE])
+    lines += emit_rock("ROCK_ART_COPPER", rock_art[ROCK_COPPER])
+    lines += emit_rock("ROCK_ART_IRON", rock_art[ROCK_IRON])
     lines += [
-        "};",
-        "",
         "const uint16_t* mineTile(uint8_t x, uint8_t y) {",
         "    if (x >= 20 || y >= 15) return MINE_TILES[0];",
         "    uint8_t id = pgm_read_byte(&MINE_ART[y][x]);",
@@ -325,13 +399,27 @@ def main():
         "    return pgm_read_byte(&MINE_GROUND[y][x]);",
         "}",
         "",
+        "uint8_t mineRockKind(uint8_t x, uint8_t y) {",
+        "    if (x >= 20 || y >= 15) return 0;",
+        "    return pgm_read_byte(&MINE_ROCK[y][x]);",
+        "}",
+        "",
+        "const uint16_t* mineRockArt(uint8_t kind) {",
+        "    if (kind == 2) return ROCK_ART_COPPER;",
+        "    if (kind == 3) return ROCK_ART_IRON;",
+        "    return ROCK_ART_STONE;",
+        "}",
+        "",
     ]
     OUT_CPP.write_text("\n".join(lines), encoding="utf-8")
     print(f"tiles {len(tiles)} -> {OUT_CPP}")
 
-    write_png(PREVIEW, room, 1)
+    preview = [row[:] for row in room]
+    for x, y, kind in ROCKS:
+        preview[y][x] = over(rock_art[kind], preview[y][x])
+    write_png(PREVIEW, preview, 1)
     write_html(PREVIEW, HTML)
-    write_png(ROOT / "tools" / "_mine_preview_3x.png", room, 3)
+    write_png(ROOT / "tools" / "_mine_preview_3x.png", preview, 3)
     print(f"preview {PREVIEW}")
 
 

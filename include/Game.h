@@ -30,6 +30,7 @@ enum Tool : uint8_t {
     TOOL_WATER,
     TOOL_SEED,
     TOOL_HARVEST,
+    TOOL_PICKAXE,
     TOOL_COUNT
 };
 
@@ -54,6 +55,11 @@ struct GameState {
     uint8_t wool;
     uint8_t apples;
     uint8_t forage;
+    uint8_t stone;
+    uint8_t copperOre;
+    uint8_t ironOre;
+    uint8_t coal;
+    uint8_t mineHits[MAP_H][MAP_W];  // 0 gone, 1 cracked, 2 intact
     uint8_t petted;  // bitmask, cleared when the farmer sleeps
     uint8_t stamina;
     uint16_t day;

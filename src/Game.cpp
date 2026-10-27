@@ -33,6 +33,7 @@ static bool farmPassage(uint8_t x, uint8_t y) {
 }
 
 static bool walkable(const GameState& g, uint8_t x, uint8_t y) {
+    if (g.place == PLACE_MINE && g.mineHits[y][x] != 0) return false;
     uint8_t ground = groundAt(g, x, y);
     if (ground == G_GRASS || ground == G_SOIL || ground == G_TILLED ||
         ground == G_FLOOR || ground == G_PATH || ground == G_FORAGE) {
@@ -203,13 +204,26 @@ static void useTool(GameState& g, Cell& cell) {
     }
 }
 
+static void resetMineRocks(GameState& g) {
+    for (int y = 0; y < MAP_H; ++y) {
+        for (int x = 0; x < MAP_W; ++x) {
+            g.mineHits[y][x] = mineRockKind((uint8_t)x, (uint8_t)y) ? 2 : 0;
+        }
+    }
+    if (g.place == PLACE_MINE) g.mineHits[g.playerY][g.playerX] = 0;
+}
+
 static void useBin(GameState& g) {
     uint32_t earned = (uint32_t)g.crops * PRICE_CROP
                     + (uint32_t)g.eggs * PRICE_EGG
                     + (uint32_t)g.milk * PRICE_MILK
                     + (uint32_t)g.wool * PRICE_WOOL
                     + (uint32_t)g.apples * PRICE_APPLE
-                    + (uint32_t)g.forage * PRICE_FORAGE;
+                    + (uint32_t)g.forage * PRICE_FORAGE
+                    + (uint32_t)g.stone * PRICE_STONE
+                    + (uint32_t)g.copperOre * PRICE_COPPER
+                    + (uint32_t)g.ironOre * PRICE_IRON
+                    + (uint32_t)g.coal * PRICE_COAL;
     if (earned > 0) {
         uint32_t sum = (uint32_t)g.gold + earned;
         if (sum > 65535u) sum = 65535u;
@@ -222,6 +236,10 @@ static void useBin(GameState& g) {
         g.wool = 0;
         g.apples = 0;
         g.forage = 0;
+        g.stone = 0;
+        g.copperOre = 0;
+        g.ironOre = 0;
+        g.coal = 0;
         setToast(g, msg);
         markSave(g);
         return;
@@ -266,6 +284,7 @@ static void sleepMorning(GameState& g) {
     g.minuteAccumMs = 0;
     g.day++;
     g.petted = 0;
+    resetMineRocks(g);
     for (int y = 0; y < MAP_H; ++y) {
         for (int x = 0; x < MAP_W; ++x) {
             uint8_t mapG = pgm_read_byte(&MAP_GROUND[y][x]);
@@ -420,6 +439,7 @@ void gameInit(GameState& g) {
     g.playerX = PLAYER_START_X;
     g.playerY = PLAYER_START_Y;
     g.tool = TOOL_HOE;
+    resetMineRocks(g);
     g.seeds = SEEDS_START;
     g.stamina = STAMINA_MAX;
     g.day = 1;
@@ -477,7 +497,7 @@ void gameUpdate(GameState& g, uint32_t dtMs, bool advanceClock) {
 void gameSelectTool(GameState& g, Tool tool) {
     if (tool >= TOOL_COUNT) return;
     g.tool = tool;
-    static const char* names[TOOL_COUNT] = {"Hoe", "Water", "Seed", "Harvest"};
+    static const char* names[TOOL_COUNT] = {"Hoe", "Water", "Seed", "Harvest", "Pickaxe"};
     setToast(g, names[tool]);
 }
 
@@ -533,6 +553,36 @@ static bool giveProduce(GameState& g, uint8_t& slot, const char* name) {
     return true;
 }
 
+static bool dropMine(GameState& g, uint8_t x, uint8_t y, uint8_t kind) {
+    uint8_t roll = (uint8_t)((g.day * 73u + (uint16_t)x * 19u + (uint16_t)y * 29u + g.minute) % 100u);
+    if (kind == ROCK_COPPER) return giveProduce(g, g.copperOre, "Copper Ore");
+    if (kind == ROCK_IRON) return giveProduce(g, g.ironOre, "Iron Ore");
+    if (roll < 15) return giveProduce(g, g.coal, "Coal");
+    if (roll < 25) return giveProduce(g, g.copperOre, "Copper Ore");
+    return giveProduce(g, g.stone, "Stone");
+}
+
+static bool tryMine(GameState& g, uint8_t tx, uint8_t ty) {
+    if (g.mineHits[ty][tx] == 0) return false;
+    if (g.tool != TOOL_PICKAXE) {
+        setToast(g, "Need a pickaxe");
+        return true;
+    }
+    if (!spend(g, COST_MINE)) return true;
+    g.mineHits[ty][tx]--;
+    if (g.mineHits[ty][tx] != 0) {
+        markSave(g);
+        return true;
+    }
+    uint8_t kind = mineRockKind(tx, ty);
+    if (!dropMine(g, tx, ty, kind)) {
+        g.mineHits[ty][tx] = 1;
+        return true;
+    }
+    markSave(g);
+    return true;
+}
+
 static bool petAnimal(GameState& g, uint8_t x, uint8_t y) {
     uint8_t bit = petBitAt(x, y);
     if (bit == 0) return false;
@@ -562,6 +612,7 @@ static bool interactable(const GameState& g, uint8_t tx, uint8_t ty) {
     if (g.place == PLACE_FARM && petBitAt(tx, ty) != 0) return true;
     uint8_t ground = groundAt(g, tx, ty);
     if (g.place == PLACE_FARM && ground == G_FORAGE) return true;
+    if (g.place == PLACE_MINE && g.mineHits[ty][tx] != 0) return true;
     if (indoors(g) && ground == G_DOOR) return true;
     if (ground == G_BED || ground == G_BIN) return true;
     return g.place == PLACE_FARM && toolReady(g, g.cells[ty][tx]);
@@ -584,6 +635,10 @@ static void actOnTile(GameState& g, uint8_t tx, uint8_t ty) {
     }
     if (g.place == PLACE_MINE && ground == G_DOOR) {
         exitMine(g);
+        return;
+    }
+    if (g.place == PLACE_MINE) {
+        tryMine(g, tx, ty);
         return;
     }
     if (ground == G_BED) {
@@ -726,18 +781,22 @@ static int jsonInt(const char* json, const char* key, int fallback) {
 }
 
 bool gameSave(const GameState& g) {
-    static char body[2048];
+    static char body[3072];
     char cells[1608];
+    char rocks[420];
     if (b64Encode((const uint8_t*)g.cells, sizeof(g.cells), cells, sizeof(cells)) == 0) return false;
+    if (b64Encode((const uint8_t*)g.mineHits, sizeof(g.mineHits), rocks, sizeof(rocks)) == 0) return false;
     int n = snprintf(
         body, sizeof(body),
         "{\"v\":1,\"day\":%u,\"hour\":%u,\"minute\":%u,\"gold\":%u,\"seeds\":%u,\"crops\":%u,"
-        "\"eggs\":%u,\"milk\":%u,\"wool\":%u,\"apples\":%u,\"forage\":%u,\"pet\":%u,"
-        "\"stamina\":%u,\"px\":%u,\"py\":%u,\"tool\":%u,\"in\":%u,\"cells\":\"%s\"}",
+        "\"eggs\":%u,\"milk\":%u,\"wool\":%u,\"apples\":%u,\"forage\":%u,"
+        "\"stone\":%u,\"cu\":%u,\"fe\":%u,\"coal\":%u,\"pet\":%u,"
+        "\"stamina\":%u,\"px\":%u,\"py\":%u,\"tool\":%u,\"in\":%u,\"cells\":\"%s\",\"rocks\":\"%s\"}",
         (unsigned)g.day, g.hour, g.minute, (unsigned)g.gold, (unsigned)g.seeds,
         (unsigned)g.crops, (unsigned)g.eggs, (unsigned)g.milk, (unsigned)g.wool,
-        (unsigned)g.apples, (unsigned)g.forage, (unsigned)g.petted, (unsigned)g.stamina,
-        g.playerX, g.playerY, (unsigned)g.tool, (unsigned)g.place, cells);
+        (unsigned)g.apples, (unsigned)g.forage, (unsigned)g.stone, (unsigned)g.copperOre,
+        (unsigned)g.ironOre, (unsigned)g.coal, (unsigned)g.petted, (unsigned)g.stamina,
+        g.playerX, g.playerY, (unsigned)g.tool, (unsigned)g.place, cells, rocks);
     if (n <= 0 || (size_t)n >= sizeof(body)) return false;
     return assetsWriteFile(SD_SAVE_PATH, (const uint8_t*)body, (size_t)n);
 }
@@ -746,7 +805,7 @@ static bool gameLoadBody(GameState& g, char* body);
 
 bool gameLoad(GameState& g) {
     static const char* paths[] = { SD_SAVE_PATH, "/save.json.bak", "/save.json.tmp" };
-    static char body[2048];
+    static char body[3072];
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         size_t n = 0;
         if (!assetsReadFile(paths[i], (uint8_t*)body, sizeof(body) - 1, &n)) continue;
@@ -779,6 +838,10 @@ static bool gameLoadBody(GameState& g, char* body) {
     int wool = jsonInt(body, "wool", 0);
     int apples = jsonInt(body, "apples", 0);
     int forage = jsonInt(body, "forage", 0);
+    int stone = jsonInt(body, "stone", 0);
+    int copper = jsonInt(body, "cu", 0);
+    int iron = jsonInt(body, "fe", 0);
+    int coal = jsonInt(body, "coal", 0);
     int petted = jsonInt(body, "pet", 0);
     int stamina = jsonInt(body, "stamina", STAMINA_MAX);
     int px = jsonInt(body, "px", g.playerX);
@@ -803,7 +866,18 @@ static bool gameLoadBody(GameState& g, char* body) {
     g.wool = (uint8_t)(wool < 0 ? 0 : wool > 255 ? 255 : wool);
     g.apples = (uint8_t)(apples < 0 ? 0 : apples > 255 ? 255 : apples);
     g.forage = (uint8_t)(forage < 0 ? 0 : forage > 255 ? 255 : forage);
+    g.stone = (uint8_t)(stone < 0 ? 0 : stone > 255 ? 255 : stone);
+    g.copperOre = (uint8_t)(copper < 0 ? 0 : copper > 255 ? 255 : copper);
+    g.ironOre = (uint8_t)(iron < 0 ? 0 : iron > 255 ? 255 : iron);
+    g.coal = (uint8_t)(coal < 0 ? 0 : coal > 255 ? 255 : coal);
     g.petted = (uint8_t)(petted < 0 ? 0 : petted > 255 ? 255 : petted);
+    uint8_t decodedRocks[sizeof(g.mineHits)];
+    const char* rocks = strstr(body, "\"rocks\":\"");
+    if (rocks != nullptr && b64Decode(rocks + 9, decodedRocks, sizeof(decodedRocks)) == sizeof(decodedRocks)) {
+        memcpy(g.mineHits, decodedRocks, sizeof(g.mineHits));
+    } else {
+        resetMineRocks(g);
+    }
     for (int y = 0; y < MAP_H; ++y) {
         for (int x = 0; x < MAP_W; ++x) {
             if (g.cells[y][x].ground != G_GRASS || g.cells[y][x].crop != 0) continue;

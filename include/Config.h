@@ -64,6 +64,7 @@ static constexpr uint8_t COST_HOE     = 8;
 static constexpr uint8_t COST_WATER   = 4;
 static constexpr uint8_t COST_PLANT   = 2;
 static constexpr uint8_t COST_HARVEST = 3;
+static constexpr uint8_t COST_MINE    = 8;
 
 static constexpr uint16_t PRICE_CROP = 35;
 static constexpr uint16_t PRICE_EGG  = 25;
@@ -71,6 +72,10 @@ static constexpr uint16_t PRICE_MILK = 40;
 static constexpr uint16_t PRICE_WOOL = 50;
 static constexpr uint16_t PRICE_APPLE = 30;
 static constexpr uint16_t PRICE_FORAGE = 15;
+static constexpr uint16_t PRICE_STONE  = 2;
+static constexpr uint16_t PRICE_COPPER = 5;
+static constexpr uint16_t PRICE_IRON   = 10;
+static constexpr uint16_t PRICE_COAL   = 15;
 static constexpr uint16_t PRICE_SEED = 20;
 static constexpr uint8_t  SEEDS_START = 10;
 
