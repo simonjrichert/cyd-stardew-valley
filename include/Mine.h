@@ -17,8 +17,9 @@ static constexpr uint8_t ROCK_IRON   = 3;
 
 static constexpr uint8_t MINE_SPAWN_X = 7;
 static constexpr uint8_t MINE_SPAWN_Y = 5;
-static constexpr uint8_t FARM_MINE_X = 7;
+static constexpr uint8_t FARM_MINE_X0 = 17;
+static constexpr uint8_t FARM_MINE_X1 = 19;
 static constexpr uint8_t FARM_MINE_Y0 = 4;
-static constexpr uint8_t FARM_MINE_Y1 = 5;
-static constexpr uint8_t FARM_MINE_EXIT_X = 7;
-static constexpr uint8_t FARM_MINE_EXIT_Y = 6;
+static constexpr uint8_t FARM_MINE_Y1 = 8;
+static constexpr uint8_t FARM_MINE_EXIT_X = 16;
+static constexpr uint8_t FARM_MINE_EXIT_Y = 8;

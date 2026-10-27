@@ -102,7 +102,7 @@ def main():
         stamp(x, y, tile, G_WATER)
 
     # Flowers, a rock, and a lamp along the lawn.
-    for i, pos in enumerate(((0, 3), (8, 3), (10, 4), (15, 6), (19, 8))):
+    for i, pos in enumerate(((0, 3), (8, 3), (10, 4), (15, 6), (16, 8))):
         stamp(pos[0], pos[1], flowers[i % len(flowers)], G_PATH)
     stamp(0, 5, rocks, G_FENCE)
     stamp(7, 7, lamp, G_PATH)
@@ -197,7 +197,6 @@ def main():
         (7, 0, 0), (8, 1, 15), (9, 2, 31), (9, 0, 0),
         (0, 1, 31), (0, 6, 15), (0, 7, 0),
         (11, 6, 31), (11, 8, 15), (15, 2, 0), (15, 5, 15),
-        (16, 8, 0), (19, 6, 15), (19, 7, 31),
     ):
         x0, y0 = gx, 2 if gx else 0
         w0, h0 = 14, 18
@@ -206,10 +205,9 @@ def main():
     # Spring forage you can pick up. Walkable; corridors stay open.
     blit_sheet(forage_sheet, 7, 6, 16, 16, 7 * 16, 1 * 16, G_FORAGE, crop_v=2, cover=8)
     blit_sheet(forage_sheet, 62, 6, 16, 16, 0 * 16, 4 * 16, G_FORAGE, crop_v=3, cover=8)
-    blit_sheet(forage_sheet, 34, 6, 15, 16, 17 * 16, 8 * 16, G_FORAGE, crop_v=4, cover=8)
+    blit_sheet(forage_sheet, 34, 6, 15, 16, 11 * 16, 7 * 16, G_FORAGE, crop_v=4, cover=8)
 
-    # Two modest bushes — walk around them, not through.
-    blit_sheet(bush_sheet, 1, 10, 30, 35, 17 * 16 + 1, 5 * 16 + 10, G_FENCE, cover=28)
+    # One modest bush north of the pond. The east corner is the mineshaft.
     blit_sheet(bush_sheet, 1, 132, 32, 32, 10 * 16, 1 * 16 + 2, G_FENCE, cover=28)
 
     # Apple tree, 3x5 tiles, north of the pond. Trunk is blocked; fruit is tappable.
@@ -217,46 +215,199 @@ def main():
     # Fallen apple beside the trunk.
     blit_sheet(misc_sheet, 208, 400, 16, 16, 15 * 16, 4 * 16, G_FORAGE, crop_v=1, cover=8)
 
-    # Mine entrance on the open lawn east of the house. Two tiles tall; the
-    # farmer walks to the grass south of it and taps the hole, like the door.
+    # East-edge mine: overlapping cute rocks form an irregular hill under the
+    # oak. Only the timber frame and rails from the mines sheet sit in it —
+    # the rectangular cave fill is dropped so the silhouette isn't a box.
     mines_sheet = ip.load_png(
         ROOT / "assets" / "stardew" / "Tilesets" / (
             "PC _ Computer - Stardew Valley - Tilesets - The Mines _ Skull Cavern.png"
         )
     )
 
-    def mines_cell(tx, ty):
-        return ip.cell(mines_sheet[3], mines_sheet[2], tx, ty)
-
-    def cave_arch(tile):
-        out = [list(row) for row in tile]
-        for y in range(16):
-            for x in range(16):
-                # Doorway: an arch in the lower two thirds.
-                nx = (x - 7.5) / 4.6
-                ny = (y - 11.0) / 8.2
-                if y < 3:
+    def blit_over(sheet, sx0, sy0, sw, sh, dx, dy, gnd=None, key=18, a_cut=16, flip_h=False, cover=12, skip_green=False):
+        _, _, bpp, rows = sheet
+        hit = {}
+        for y in range(sh):
+            for x in range(sw):
+                X, Y = dx + x, dy + y
+                if X < 0 or Y < 0 or X >= 320 or Y >= 240:
                     continue
-                if nx * nx + max(0.0, ny) * max(0.0, ny) < 1.0 and y >= 4:
-                    if nx * nx + max(0.0, ny) * max(0.0, ny) > 0.72:
-                        out[y][x] = (86, 58, 28, 255)
-                    elif y < 7:
-                        out[y][x] = (28, 18, 10, 255)
-                    else:
-                        out[y][x] = (12, 8, 6, 255)
-        return out
+                tx, ty = X // 16, Y // 16
+                if tx < 0 or tx >= 20 or ty < 0 or ty >= 13:
+                    continue
+                srcx = sx0 + (sw - 1 - x) if flip_h else sx0 + x
+                r, g, b, a = ip.pix(rows, bpp, srcx, sy0 + y)
+                if a < a_cut or (key and r + g + b < key):
+                    continue
+                if skip_green and g > r + 18 and g > b + 10 and g > 70:
+                    continue
+                art[ty][tx][Y % 16][X % 16] = (r, g, b, 255)
+                hit[(tx, ty)] = hit.get((tx, ty), 0) + 1
+        if gnd is None:
+            return
+        for (tx, ty), n in hit.items():
+            if n >= cover:
+                ground[ty][tx] = gnd
+                crop[ty][tx] = 0
 
-    cave_top = ip.composite(mines_cell(8, 4), art[4][7])
-    cave_bot = cave_arch(ip.composite(mines_cell(9, 5), art[5][7]))
-    stamp(7, 4, cave_top, G_FENCE)
-    stamp(7, 5, cave_bot, G_FENCE)
-    # A few rocks spill onto the lawn east of the mouth so it is not a 16px pole.
-    spill = ip.composite(mines_cell(10, 5), art[5][8])
+    def blit_rock(stx, sty, dx, dy):
+        blit_over(decor, stx * 16, sty * 16, 16, 16, dx, dy, G_FENCE, key=0, a_cut=24, cover=8, skip_green=True)
+
+    GRASS_RGB = grass_tile[8][8][:3]
+    ROCK_PAL = ((38, 43, 68), (60, 66, 88), (108, 124, 157), (142, 154, 180))
+    mouth_cx, mouth_cy, mouth_rx, mouth_ry = 298, 96, 11, 20
+
+    def is_lawn(p, y=0):
+        r, g, b = p[:3]
+        if abs(r - GRASS_RGB[0]) + abs(g - GRASS_RGB[1]) + abs(b - GRASS_RGB[2]) <= 24:
+            return True
+        if abs(r - 57) + abs(g - 137) + abs(b - 74) <= 14:
+            return True
+        if abs(r - 49) + abs(g - 113) + abs(b - 57) <= 18:
+            return True
+        # Keep oak leaves in the canopy; fill decor-grass specks below it.
+        if y < 56 and g > 145:
+            return False
+        if g > r + 18 and g > b + 10 and g > 70:
+            return True
+        return False
+
+    def in_mouth(x, y):
+        dx = (x - mouth_cx) / mouth_rx
+        dy = (y - mouth_cy) / mouth_ry
+        return dx * dx + dy * dy < 1.2
+
+    def hill_left(y):
+        # Irregular west face of the east-edge hill. Stays right of the flower
+        # at (16,8) and above the fence at y=144.
+        if y < 34 or y > 141:
+            return 320
+        if y < 52:
+            base = 282
+        elif y < 72:
+            base = 268
+        elif y < 118:
+            base = 262
+        else:
+            base = 270
+        wave = ((y * 3) ^ (y >> 2)) % 7 - 3
+        return base + wave
+
+    def paint_rock_px(x, y):
+        pal = ROCK_PAL[(x * 7 + y * 13) & 3]
+        j = (x + y) & 1
+        art[y // 16][x // 16][y % 16][x % 16] = (
+            min(255, pal[0] + j * 4),
+            min(255, pal[1] + j * 4),
+            min(255, pal[2] + j * 2),
+            255,
+        )
+        tx, ty = x // 16, y // 16
+        if ground[ty][tx] in (G_GRASS, G_FORAGE):
+            ground[ty][tx] = G_FENCE
+            crop[ty][tx] = 0
+
+    def fill_hill_gaps(eat_dark=True):
+        n = 0
+        for y in range(34, 144):
+            x0 = hill_left(y) - 6
+            if y >= 128:
+                x0 = max(x0, 272)
+            for x in range(max(x0, 256), 320):
+                if in_mouth(x, y):
+                    continue
+                r, g, b, _a = art[y // 16][x // 16][y % 16][x % 16]
+                if is_lawn((r, g, b), y) or (eat_dark and r + g + b < 50):
+                    paint_rock_px(x, y)
+                    n += 1
+        return n
+
+    # Hill first, then the shaft and cart on top so rocks cannot bury them.
+    timber_dx, timber_dy = 280, 62
+    cart_oy = timber_dy + 64
+    _, _, mbpp, mrows = mines_sheet
+
+    fill_hill_gaps()
+    kinds = ((2, 2), (1, 3), (0, 3), (2, 3), (1, 2))
+    k = 0
+    for dy in range(36, 128, 7):
+        for dx in range(hill_left(dy) - 6, 320, 7):
+            # Keep row 8 west of the rails as a walkable strip to the mine.
+            if dy + 16 > 128 and dx < 272:
+                continue
+            stx, sty = kinds[k % 5]
+            blit_rock(stx, sty, dx, dy)
+            k += 1
+    leftover = fill_hill_gaps()
+    print("hill grass gaps", leftover)
+
+    def shaft_opaque(x, y):
+        lx, ly = x - timber_dx, y - timber_dy
+        if not (0 <= lx < 32 and 0 <= ly < 80):
+            return False
+        r, g, b, a = ip.pix(mrows, mbpp, 31 - lx, 128 + ly)
+        return a >= 16 and r + g + b >= 18
+
+    timber_hit = {}
+    for y in range(80):
+        for x in range(32):
+            r, g, b, a = ip.pix(mrows, mbpp, 31 - x, 128 + y)
+            if a < 16 or r + g + b < 18:
+                continue
+            X, Y = timber_dx + x, timber_dy + y
+            if not (0 <= X < 320 and 0 <= Y < 208):
+                continue
+            tx, ty = X // 16, Y // 16
+            art[ty][tx][Y % 16][X % 16] = (r, g, b, 255)
+            timber_hit[(tx, ty)] = timber_hit.get((tx, ty), 0) + 1
+    for (tx, ty), n in timber_hit.items():
+        if n >= 10:
+            ground[ty][tx] = G_FENCE
+            crop[ty][tx] = 0
+
+    ground[8][17] = G_PATH
+    ground[8][18] = G_PATH
+    crop[8][17] = 0
+    crop[8][18] = 0
+
+    cart_minx, cart_maxx = 16, -1
     for y in range(16):
         for x in range(16):
-            if x > 5:
-                spill[y][x] = art[5][8][y][x]
-    art[5][8] = spill
+            r, g, b, a = ip.pix(mrows, mbpp, 2 * 16 + x, 12 * 16 + y)
+            if a >= 96:
+                cart_minx, cart_maxx = min(cart_minx, x), max(cart_maxx, x)
+    flip_min, flip_max = 15 - cart_maxx, 15 - cart_minx
+    cart_ox = timber_dx + 16 - (flip_min + flip_max + 1) // 2
+    blit_over(mines_sheet, 2 * 16, 12 * 16, 16, 16, cart_ox, cart_oy, key=0, a_cut=96, flip_h=True)
+
+    def cart_opaque(x, y):
+        lx, ly = x - cart_ox, y - cart_oy
+        if not (0 <= lx < 16 and 0 <= ly < 16):
+            return False
+        r, g, b, a = ip.pix(mrows, mbpp, 2 * 16 + (15 - lx), 12 * 16 + ly)
+        return a >= 96
+
+    # Plug lawn holes in the hill without painting over the door or cart.
+    plugged = 0
+    for y in range(34, 144):
+        for x in range(max(hill_left(y) - 6, 256), 320):
+            if y >= 128 and x < 272:
+                continue
+            if shaft_opaque(x, y) or cart_opaque(x, y):
+                continue
+            r, g, b, _a = art[y // 16][x // 16][y % 16][x % 16]
+            if is_lawn((r, g, b), y):
+                paint_rock_px(x, y)
+                plugged += 1
+    print("plugged around door", plugged)
+
+    # Pond-to-mine lane between the water and the pasture fence.
+    for x in range(12, 19):
+        if ground[8][x] == G_FENCE:
+            ground[8][x] = G_GRASS
+            crop[8][x] = 0
+    ground[8][17] = G_PATH
+    ground[8][18] = G_PATH
 
     # 32x32 animals, two frames each, quadrants TL TR BL BR.
     def add_quad(img, fx, fy, onto_grass=True):
@@ -300,8 +451,8 @@ def main():
     ground[7][8] = G_PATH
     ground[7][9] = G_PATH
     place_quad(10, 4, sheep0, G_PATH)
-    place_quad(15, 7, slime0, G_PATH)
-    for pos in ((0, 8), (19, 4)):
+    place_quad(10, 6, slime0, G_PATH)
+    for pos in ((0, 8), (19, 11)):
         art_ids[pos[1]][pos[0]] = chick[0]
         indexed[pos[1]][pos[0]] = atlas.tiles[chick[0]]
         ground[pos[1]][pos[0]] = G_FENCE
@@ -411,6 +562,62 @@ def main():
             handle.write(bytes(b for row in grid for b in row))
 
     ip.write_png(Path(r"C:\Users\simon\AppData\Local\Temp\cyd-farm-cute.png"), preview, atlas)
+
+    import base64
+    import zlib
+    pal = atlas.order
+    pix = []
+    for ty in range(15):
+        for sy in range(16):
+            for tx in range(20):
+                for sx in range(16):
+                    pix.append(pal[preview[ty][tx][sy][sx]])
+    farm_png = ROOT / "tools" / "_farm_preview.png"
+    raw = bytearray()
+    for y in range(240):
+        raw.append(0)
+        for x in range(320):
+            raw.extend(pix[y * 320 + x])
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 320, 240, 8, 2, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+    farm_png.write_bytes(png)
+    b64 = base64.b64encode(png).decode("ascii")
+    (ROOT / "tools" / "_farm_preview.html").write_text(
+        f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mine entrance preview</title>
+<style>
+  body {{ margin: 0; background: #120c08; color: #e8d2b0; font-family: Georgia, serif; text-align: center; }}
+  main {{ padding: 28px 20px 48px; }}
+  h1 {{ font-size: 22px; font-weight: normal; margin: 0 0 8px; }}
+  p {{ margin: 0 0 18px; color: #b89a72; font-size: 14px; }}
+  .row {{ display: flex; gap: 32px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }}
+  figure {{ margin: 0; }}
+  figcaption {{ font-size: 13px; color: #b89a72; margin-top: 8px; }}
+  img {{ display: block; image-rendering: pixelated; border: 3px solid #8a5a28; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>Mine entrance</h1>
+  <p>Rock hill on the east edge, timber mouth tucked in &middot; 320&times;240</p>
+  <div class="row">
+    <figure><img alt="Farm 2x" width="640" height="480" src="data:image/png;base64,{b64}"><figcaption>2&times;</figcaption></figure>
+    <figure><img alt="Farm 1x" width="320" height="240" src="data:image/png;base64,{b64}"><figcaption>Actual pixels</figcaption></figure>
+  </div>
+</main>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
     print(f"tiles {len(atlas.tiles)} colors {len(atlas.order)} atlas {atlas_path.stat().st_size}")
     print("player", player_bases, "chick", chick)
     print("pig", pig0, pig1, "sheep", sheep0, sheep1, "cow", cow0, cow1, "slime", slime0, slime1)

@@ -28,7 +28,8 @@ static bool farmPassage(uint8_t x, uint8_t y) {
     // sits on the south approach. Walk through them; do not path around.
     if (x >= 8 && x <= 9 && y >= 3 && y <= 4) return true;    // cow
     if (x >= 10 && x <= 11 && y >= 4 && y <= 5) return true;  // sheep
-    if (x >= 15 && x <= 16 && y >= 7 && y <= 8) return true;  // slime
+    if (x >= 10 && x <= 11 && y >= 6 && y <= 7) return true;  // slime
+    if (y == 8 && x >= 10 && x <= 18) return true;            // pond-to-mine lane
     return false;
 }
 
@@ -47,7 +48,7 @@ static bool isFarmDoor(uint8_t x, uint8_t y) {
 }
 
 static bool isFarmMine(uint8_t x, uint8_t y) {
-    return x == FARM_MINE_X && y >= FARM_MINE_Y0 && y <= FARM_MINE_Y1;
+    return x >= FARM_MINE_X0 && x <= FARM_MINE_X1 && y >= FARM_MINE_Y0 && y <= FARM_MINE_Y1;
 }
 
 static bool isFruitTree(uint8_t x, uint8_t y) {
@@ -340,7 +341,7 @@ static bool stepToward(GameState& g, uint8_t tx, uint8_t ty) {
                     found = here;
                     break;
                 }
-                if (cheb <= 2 && (groundAt(g, tx, ty) == G_BED || isFruitTree(tx, ty))) {
+                if (cheb <= 2 && (groundAt(g, tx, ty) == G_BED || isFruitTree(tx, ty) || isFarmMine(tx, ty))) {
                     found = here;
                     break;
                 }
@@ -513,6 +514,7 @@ static bool closeEnoughToAct(const GameState& g, uint8_t tx, uint8_t ty) {
     int dist = tileDist(g, tx, ty);
     if (dist <= 1) return true;
     if (g.place == PLACE_HOUSE && groundAt(g, tx, ty) == G_BED && dist <= 2) return true;
+    if (g.place == PLACE_FARM && isFarmMine(tx, ty) && dist <= 2) return true;
     return g.place == PLACE_FARM && isFruitTree(tx, ty) && dist <= 2;
 }
 
@@ -536,7 +538,7 @@ static uint8_t petBitAt(uint8_t x, uint8_t y) {
     if (x >= 8 && x <= 9 && y >= 6 && y <= 7) return 2;      // pig
     if (x >= 10 && x <= 11 && y >= 4 && y <= 5) return 4;    // sheep
     if (x == 0 && y == 8) return 8;                          // chicken
-    if (x == 19 && y == 4) return 16;                        // chicken
+    if (x == 19 && y == 11) return 16;                       // chicken
     if (isFruitTree(x, y)) return 32;                        // apple tree
     return 0;
 }
@@ -880,8 +882,15 @@ static bool gameLoadBody(GameState& g, char* body) {
     }
     for (int y = 0; y < MAP_H; ++y) {
         for (int x = 0; x < MAP_W; ++x) {
-            if (g.cells[y][x].ground != G_GRASS || g.cells[y][x].crop != 0) continue;
             uint8_t mapG = pgm_read_byte(&MAP_GROUND[y][x]);
+            uint8_t saved = g.cells[y][x].ground;
+            // Layout moved: old fence on the pond-to-mine lane must not stick.
+            if (saved == G_FENCE && (mapG == G_GRASS || mapG == G_PATH || mapG == G_FORAGE || mapG == G_FLOOR)) {
+                g.cells[y][x].ground = mapG;
+                g.cells[y][x].crop = pgm_read_byte(&MAP_CROP[y][x]);
+                continue;
+            }
+            if (saved != G_GRASS || g.cells[y][x].crop != 0) continue;
             if (mapG == G_FORAGE) {
                 g.cells[y][x].ground = G_FORAGE;
                 g.cells[y][x].crop = pgm_read_byte(&MAP_CROP[y][x]);
